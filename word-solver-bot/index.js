@@ -1,17 +1,24 @@
 import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { loadDictionary } from './dictionary.js';
 import { extractGridFromImage } from './gemini.js';
 import { parseGrid, parseClues, solvePuzzle, assignUniqueCandidates, advanceCandidateIndex, formatSolution } from './solver.js';
 
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
+const SESSIONS_FILE = path.join(__dirname, 'sessions_data.json');
 
-// Start dummy HTTP health check server for Render / Web Service port scanner
+// Start dummy HTTP health check server for Render Web Service port scanner
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Word Solver Bot is running!\n');
@@ -25,6 +32,36 @@ if (!BOT_TOKEN) {
 
 let dictionary = new Set();
 const sessions = new Map();
+
+// Load sessions from disk on startup
+function loadSessionsFromDisk() {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+      for (const [key, val] of Object.entries(data)) {
+        sessions.set(Number(key), val);
+      }
+      console.log(`💾 Loaded ${sessions.size} saved sessions from disk.`);
+    }
+  } catch (e) {
+    console.error('Error loading sessions from disk:', e);
+  }
+}
+
+// Save sessions to disk
+function saveSessionsToDisk() {
+  try {
+    const obj = {};
+    for (const [key, val] of sessions.entries()) {
+      obj[key] = val;
+    }
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('Error saving sessions to disk:', e);
+  }
+}
+
+loadSessionsFromDisk();
 
 function getSession(chatId) {
   if (!sessions.has(chatId)) {
@@ -48,13 +85,14 @@ bot.command(['start', 'help'], (ctx) => {
     `2️⃣ **Send the Clues List** (e.g. \`B--- (4)\`, \`C----- (6)\`, etc.).\n` +
     `*(Or send/forward an image with the clues in the caption!)*\n\n` +
     `3️⃣ I will extract the grid and solve all words!\n` +
-    `4️⃣ If a word is wrong, reply with the number (e.g. \`5\` or \`5 wrong\`) to swap it with another option!`
+    `4️⃣ If a word is wrong, reply with the number (e.g. \`5\` or \`5 wrong\`) to switch to another word option!`
   );
 });
 
 bot.command('reset', (ctx) => {
   const chatId = ctx.chat.id;
   sessions.delete(chatId);
+  saveSessionsToDisk();
   ctx.reply('🔄 Session reset! Send a new grid image or clue list to start a fresh puzzle.');
 });
 
@@ -79,6 +117,7 @@ bot.on('photo', async (ctx) => {
 
     if (grid && grid.length > 0) {
       session.grid = grid;
+      saveSessionsToDisk();
       await ctx.reply(`✅ Grid extracted successfully (${grid.length}x${grid[0].length})!\n\nNow send or reply with the clues list (e.g. \`B--- (4)\`, \`C----- (6)\`).`);
     } else {
       await ctx.reply('❌ Failed to parse grid from image. Please ensure the image is clear and try again.');
@@ -88,6 +127,7 @@ bot.on('photo', async (ctx) => {
       const clues = parseClues(ctx.message.caption);
       if (clues && clues.length > 0) {
         session.clues = clues;
+        saveSessionsToDisk();
         runSolverAndReply(ctx, session);
       }
     }
@@ -103,25 +143,35 @@ bot.on('text', async (ctx) => {
   const chatId = ctx.chat.id;
   const session = getSession(chatId);
 
+  // Check if user is requesting to swap/change a word number (e.g. "1", "1 wrong", "5", etc.)
   const swapMatch = text.match(/^(\d+)(?:\s+(?:wrong|reject|next|swap))?$/i);
-  if (swapMatch && session.results && session.selectedIndices) {
+  if (swapMatch) {
     const wordNum = parseInt(swapMatch[1], 10);
-    const itemIndex = wordNum - 1;
 
+    if (!session.results || !session.selectedIndices || session.results.length === 0) {
+      return ctx.reply('⚠️ No active puzzle solution found for your chat. Please send your clues or image grid to start a puzzle!');
+    }
+
+    const itemIndex = wordNum - 1;
     if (itemIndex >= 0 && itemIndex < session.results.length) {
       const advanced = advanceCandidateIndex(session.results[itemIndex], session.selectedIndices, itemIndex);
+      saveSessionsToDisk();
+
       if (advanced) {
         const solutionText = formatSolution(session);
         return ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
       } else {
-        return ctx.reply(`⚠️ No alternative positions found for Word #${wordNum}.`);
+        return ctx.reply(`⚠️ No alternative word options found for Word #${wordNum}.`);
       }
+    } else {
+      return ctx.reply(`⚠️ Invalid word number #${wordNum}. Please enter a number between 1 and ${session.results.length}.`);
     }
   }
 
   const clues = parseClues(text);
   if (clues && clues.length > 0) {
     session.clues = clues;
+    saveSessionsToDisk();
 
     if (session.grid) {
       runSolverAndReply(ctx, session);
@@ -134,6 +184,7 @@ bot.on('text', async (ctx) => {
   const grid = parseGrid(text);
   if (grid && grid.length >= 3 && grid[0].length >= 3) {
     session.grid = grid;
+    saveSessionsToDisk();
     await ctx.reply(`✅ Grid parsed manually (${grid.length}x${grid[0].length})!`);
 
     if (session.clues) {
@@ -154,6 +205,7 @@ function runSolverAndReply(ctx, session) {
 
   session.results = solvePuzzle(session.grid, session.clues, dictionary);
   session.selectedIndices = assignUniqueCandidates(session.results);
+  saveSessionsToDisk();
 
   const solutionText = formatSolution(session);
   ctx.replyWithMarkdown(solutionText);
