@@ -188,7 +188,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
 
     message_content = (
         f"🎁 <b>A secret whisper has been sent for {target_display}!</b>\n"
-        f"<i>Only {target_display}, the sender, or owner can open this whisper.</i>"
+        f"<i>Only {target_display} or the sender can open this whisper.</i>"
     )
 
     keyboard = InlineKeyboardMarkup([
