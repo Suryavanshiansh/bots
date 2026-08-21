@@ -154,11 +154,11 @@ bot.on('text', async (ctx) => {
 
     const itemIndex = wordNum - 1;
     if (itemIndex >= 0 && itemIndex < session.results.length) {
-      const advanced = advanceCandidateIndex(session.results[itemIndex], session.selectedIndices, itemIndex);
+      const advanced = advanceCandidateIndex(session, itemIndex);
       saveSessionsToDisk();
 
       if (advanced) {
-        const solutionText = formatSolution(session);
+        const solutionText = formatSolution(session, wordNum);
         return ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
       } else {
         return ctx.reply(`⚠️ No alternative word options found for Word #${wordNum}.`);
