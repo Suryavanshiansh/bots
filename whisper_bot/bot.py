@@ -37,7 +37,7 @@ from telegram.ext import (
     ContextTypes
 )
 
-from database import init_db, save_whisper, get_whisper
+from database import init_db, save_whisper, get_whisper, mark_whisper_seen
 
 # Load environment variables
 env_path = os.path.join(BASE_DIR, ".env")
@@ -253,7 +253,7 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
     user_id = from_user.id
     user_username = (from_user.username or "").lower()
 
-    # Permission check: Allowed if Sender, Target Username, Target ID, or OWNER_ID
+    # Permission check: Allowed if Sender, Target Username, Target ID, Anyone, or OWNER_ID
     is_sender = (user_id == whisper["sender_id"])
     is_owner = (OWNER_ID > 0 and user_id == OWNER_ID)
     is_target_id = (whisper["target_id"] is not None and user_id == whisper["target_id"])
@@ -261,14 +261,49 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
         whisper["target_username"] is not None and
         user_username == whisper["target_username"].lower()
     )
+    is_anyone_target = (whisper["target_id"] is None and whisper["target_username"] is None)
 
-    if is_sender or is_target_id or is_target_username or is_owner:
+    # Receiver definition: target user or non-sender viewer when target is Anyone
+    is_receiver = is_target_id or is_target_username or (is_anyone_target and not is_sender)
+
+    if is_sender or is_target_id or is_target_username or is_anyone_target or is_owner:
         role_label = ""
-        if is_owner and not (is_sender or is_target_id or is_target_username):
+        if is_owner and not (is_sender or is_target_id or is_target_username or is_anyone_target):
             role_label = " 👑 [Owner View]"
         
         secret_text = whisper["secret_text"]
         await query.answer(text=f"🤫 Secret Whisper{role_label}:\n\n{secret_text}", show_alert=True)
+
+        # If opened by receiver for the first time, mark as seen and update message in Telegram chat
+        if is_receiver and not whisper.get("is_seen"):
+            mark_whisper_seen(whisper_id)
+
+            if whisper["target_username"]:
+                target_display = f"@{whisper['target_username']}"
+            elif whisper["target_id"]:
+                target_display = f"User ID {whisper['target_id']}"
+            else:
+                target_display = "Anyone"
+
+            seen_display_name = f"@{from_user.username}" if from_user.username else (from_user.first_name or "Recipient")
+
+            seen_message_content = (
+                f"👁️ <b>Secret whisper for {target_display} has been read!</b>\n"
+                f"<i>This whisper was opened by {seen_display_name}.</i>"
+            )
+
+            seen_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👁️ Whisper Seen (Show Secret) 🤫", callback_data=f"ws_{whisper_id}")]
+            ])
+
+            try:
+                await query.edit_message_text(
+                    text=seen_message_content,
+                    parse_mode="HTML",
+                    reply_markup=seen_keyboard
+                )
+            except Exception as e:
+                logging.warning(f"Could not edit whisper message to seen: {e}")
     else:
         await query.answer(
             text="❌ This secret whisper is not for you! Only the intended recipient or sender can open it.",

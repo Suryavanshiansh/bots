@@ -20,9 +20,18 @@ def init_db():
                 target_id INTEGER,
                 target_username TEXT,
                 secret_text TEXT NOT NULL,
+                is_seen INTEGER DEFAULT 0,
+                seen_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(whispers)")
+        existing_cols = [row[1] for row in cur.fetchall()]
+        if "is_seen" not in existing_cols:
+            conn.execute("ALTER TABLE whispers ADD COLUMN is_seen INTEGER DEFAULT 0")
+        if "seen_at" not in existing_cols:
+            conn.execute("ALTER TABLE whispers ADD COLUMN seen_at TIMESTAMP")
         conn.commit()
 
 def save_whisper(
@@ -38,6 +47,15 @@ def save_whisper(
             INSERT INTO whispers (whisper_id, sender_id, sender_username, target_id, target_username, secret_text)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (whisper_id, sender_id, sender_username, target_id, target_username, secret_text))
+        conn.commit()
+
+def mark_whisper_seen(whisper_id: str):
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE whispers
+            SET is_seen = 1, seen_at = CURRENT_TIMESTAMP
+            WHERE whisper_id = ?
+        """, (whisper_id,))
         conn.commit()
 
 def get_whisper(whisper_id: str) -> Optional[Dict[str, Any]]:
