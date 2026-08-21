@@ -17,6 +17,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
 const SESSIONS_FILE = path.join(__dirname, 'sessions_data.json');
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 // Start dummy HTTP health check server for Render Web Service port scanner
 http.createServer((req, res) => {
@@ -25,6 +26,16 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`🌐 Health check HTTP server listening on port ${PORT}`);
 });
+
+// Self-ping heartbeat to prevent Render free instance from sleeping
+if (RENDER_EXTERNAL_URL) {
+  console.log(`💓 Keep-alive heartbeat enabled for URL: ${RENDER_EXTERNAL_URL}`);
+  setInterval(() => {
+    fetch(RENDER_EXTERNAL_URL)
+      .then(() => console.log('💓 Keep-alive ping sent successfully.'))
+      .catch((err) => console.log('⚠️ Keep-alive ping warning:', err.message));
+  }, 10 * 60 * 1000); // 10 minutes
+}
 
 if (!BOT_TOKEN) {
   console.warn('⚠️ TELEGRAM_BOT_TOKEN is missing in .env file!');

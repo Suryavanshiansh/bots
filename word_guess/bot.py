@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 import threading
+import time
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Ensure the folder containing this file is in sys.path
@@ -52,6 +54,21 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"🌐 Health check HTTP server listening on port {port}")
     server.serve_forever()
+
+def keep_alive_heartbeat():
+    """Pings the Render external URL every 10 minutes to prevent the free instance from sleeping."""
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        return
+    
+    print(f"💓 Keep-alive heartbeat enabled for URL: {url}")
+    while True:
+        time.sleep(600)  # 10 minutes
+        try:
+            urllib.request.urlopen(url, timeout=10)
+            print("💓 Keep-alive ping sent successfully.")
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping warning: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
@@ -154,6 +171,9 @@ def main():
 
     # Start health check server for Render Web Service in a background thread
     threading.Thread(target=start_health_server, daemon=True).start()
+
+    # Start keep-alive heartbeat thread to prevent Render free instance from sleeping
+    threading.Thread(target=keep_alive_heartbeat, daemon=True).start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
