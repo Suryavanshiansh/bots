@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
 import dotenv from 'dotenv';
+import http from 'http';
 import { loadDictionary } from './dictionary.js';
 import { extractGridFromImage } from './gemini.js';
 import { parseGrid, parseClues, solvePuzzle, assignUniqueCandidates, advanceCandidateIndex, formatSolution } from './solver.js';
@@ -8,6 +9,15 @@ dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const PORT = process.env.PORT || 3000;
+
+// Start dummy HTTP health check server for Render / Web Service port scanner
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Word Solver Bot is running!\n');
+}).listen(PORT, () => {
+  console.log(`🌐 Health check HTTP server listening on port ${PORT}`);
+});
 
 if (!BOT_TOKEN) {
   console.warn('⚠️ TELEGRAM_BOT_TOKEN is missing in .env file!');
@@ -59,74 +69,79 @@ bot.on('photo', async (ctx) => {
 
     await ctx.reply('🔍 Extracting grid from image using Gemini Vision...');
 
-    const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
-    const response = await fetch(fileLink.href);
+    const fileUrl = await ctx.telegram.getFileLink(highestResPhoto.file_id);
+    const response = await fetch(fileUrl.href);
     const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const imageBuffer = Buffer.from(arrayBuffer);
 
-    const rawGridText = await extractGridFromImage(buffer, 'image/jpeg', GEMINI_API_KEY);
-    const grid = parseGrid(rawGridText);
+    const extractedText = await extractGridFromImage(imageBuffer, 'image/jpeg', GEMINI_API_KEY);
+    const grid = parseGrid(extractedText);
 
-    if (!grid || grid.length === 0) {
-      return ctx.reply('❌ Could not parse grid letters from the image. Please make sure the image is clear.');
+    if (grid && grid.length > 0) {
+      session.grid = grid;
+      await ctx.reply(`✅ Grid extracted successfully (${grid.length}x${grid[0].length})!\n\nNow send or reply with the clues list (e.g. \`B--- (4)\`, \`C----- (6)\`).`);
+    } else {
+      await ctx.reply('❌ Failed to parse grid from image. Please ensure the image is clear and try again.');
     }
 
-    // Reset old session state for new photo
-    session.grid = grid;
-    session.clues = null;
-    session.results = null;
-
-    // Check if caption has clues
-    const caption = ctx.message.caption || '';
-    const clues = parseClues(caption);
-
-    if (clues.length > 0) {
-      session.clues = clues;
-      return runSolverAndReply(ctx, session);
+    if (ctx.message.caption) {
+      const clues = parseClues(ctx.message.caption);
+      if (clues && clues.length > 0) {
+        session.clues = clues;
+        runSolverAndReply(ctx, session);
+      }
     }
-
-    ctx.reply(`✅ Grid parsed successfully (${grid.length}x${grid[0].length})!\n\n📋 Now send or forward the list of target words (e.g. \`B--- (4)\`).`);
   } catch (err) {
-    console.error('Error processing photo:', err);
+    console.error('Error handling photo:', err);
     ctx.reply(`❌ Error processing image: ${err.message}`);
   }
 });
 
 // Text Handler
 bot.on('text', async (ctx) => {
-  const chatId = ctx.chat.id;
   const text = ctx.message.text.trim();
+  const chatId = ctx.chat.id;
   const session = getSession(chatId);
 
-  // Wrong word replacement (e.g. "5", "5 wrong", "5 is wrong")
-  const wrongWordMatch = text.match(/^(?:number\s+)?([0-9]+)(?:\s+is)?(?:\s+wrong)?$/i);
-  if (wrongWordMatch && session.results && session.results.length > 0) {
-    const clueNum = parseInt(wrongWordMatch[1], 10);
-    const clueIdx = clueNum - 1;
+  const swapMatch = text.match(/^(\d+)(?:\s+(?:wrong|reject|next|swap))?$/i);
+  if (swapMatch && session.results && session.selectedIndices) {
+    const wordNum = parseInt(swapMatch[1], 10);
+    const itemIndex = wordNum - 1;
 
-    if (clueIdx >= 0 && clueIdx < session.results.length) {
-      const candidates = session.results[clueIdx].candidates;
-      if (candidates.length <= 1) {
-        return ctx.reply(`⚠️ No alternative words found in the grid for clue #${clueNum} (${session.clues[clueIdx].raw}).`);
+    if (itemIndex >= 0 && itemIndex < session.results.length) {
+      const advanced = advanceCandidateIndex(session.results[itemIndex], session.selectedIndices, itemIndex);
+      if (advanced) {
+        const solutionText = formatSolution(session);
+        return ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
+      } else {
+        return ctx.reply(`⚠️ No alternative positions found for Word #${wordNum}.`);
       }
-
-      advanceCandidateIndex(session, clueIdx);
-      const solutionMsg = formatSolution(session, clueNum);
-      return ctx.replyWithMarkdown(solutionMsg);
     }
   }
 
-  // Parse clues from text
   const clues = parseClues(text);
-
-  if (clues.length > 0) {
+  if (clues && clues.length > 0) {
     session.clues = clues;
 
     if (session.grid) {
-      return runSolverAndReply(ctx, session);
+      runSolverAndReply(ctx, session);
     } else {
-      return ctx.reply(`✅ Received ${clues.length} clue patterns!\n\n🖼️ Now please send or forward the image of the word search grid.`);
+      ctx.reply(`✅ Parsed ${clues.length} clue patterns!\n\nNow send an image of the word search grid to solve!`);
     }
+    return;
+  }
+
+  const grid = parseGrid(text);
+  if (grid && grid.length >= 3 && grid[0].length >= 3) {
+    session.grid = grid;
+    await ctx.reply(`✅ Grid parsed manually (${grid.length}x${grid[0].length})!`);
+
+    if (session.clues) {
+      runSolverAndReply(ctx, session);
+    } else {
+      ctx.reply('Now send the clues list (e.g. `B--- (4)`).');
+    }
+    return;
   }
 
   ctx.reply('Forward me a word challenge message (with clues like `B--- (4)`) or send an image of the grid!');

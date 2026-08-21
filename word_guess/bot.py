@@ -1,6 +1,8 @@
 import logging
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Ensure the folder containing this file is in sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,6 +35,23 @@ logging.basicConfig(
 
 # Initialize solver with default paths (auto-located relative to BASE_DIR)
 solver = WordleSolver()
+
+# HTTP Health check handler for Render Web Service port scanning
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Crocodile Bot is running!")
+
+    def log_message(self, format, *args):
+        return # Suppress HTTP log clutter
+
+def start_health_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    print(f"🌐 Health check HTTP server listening on port {port}")
+    server.serve_forever()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
@@ -132,6 +151,9 @@ def main():
         print(f"Please edit {os.path.join(BASE_DIR, '.env')} and paste your bot token from @BotFather")
         print("=======================================================\n")
         return
+
+    # Start health check server for Render Web Service in a background thread
+    threading.Thread(target=start_health_server, daemon=True).start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
