@@ -43,7 +43,7 @@ Ensure `.env` files are kept private and never committed to GitHub.
 - **`whisper_bot/.env`**:
   ```env
   TELEGRAM_BOT_TOKEN=your_bot_token_here
-  OWNER_ID=your_telegram_user_id_here
+  
   ```
 
 ---
