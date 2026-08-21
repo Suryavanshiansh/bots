@@ -25,6 +25,15 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(whispers)")
         existing_cols = [row[1] for row in cur.fetchall()]
@@ -32,6 +41,26 @@ def init_db():
             conn.execute("ALTER TABLE whispers ADD COLUMN is_seen INTEGER DEFAULT 0")
         if "seen_at" not in existing_cols:
             conn.execute("ALTER TABLE whispers ADD COLUMN seen_at TIMESTAMP")
+        conn.commit()
+
+def upsert_user(
+    user_id: int,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None
+):
+    if not user_id:
+        return
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO users (user_id, username, first_name, last_name, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(excluded.username, users.username),
+                first_name = COALESCE(excluded.first_name, users.first_name),
+                last_name = COALESCE(excluded.last_name, users.last_name),
+                updated_at = CURRENT_TIMESTAMP
+        """, (user_id, username, first_name, last_name))
         conn.commit()
 
 def save_whisper(
@@ -71,19 +100,36 @@ def get_all_past_targets(sender_id: int, limit: int = 40) -> list[Dict[str, Any]
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT target_username, target_id, MAX(created_at) as last_sent
-            FROM whispers
-            WHERE sender_id = ? AND (target_username IS NOT NULL OR target_id IS NOT NULL)
-            GROUP BY LOWER(IFNULL(target_username, '')), target_id
+            SELECT 
+                w.target_username, 
+                w.target_id, 
+                MAX(w.created_at) as last_sent,
+                u.first_name as user_first_name,
+                u.last_name as user_last_name,
+                u.username as user_current_username
+            FROM whispers w
+            LEFT JOIN users u ON (
+                (w.target_id IS NOT NULL AND w.target_id = u.user_id) OR
+                (w.target_id IS NULL AND w.target_username IS NOT NULL AND LOWER(w.target_username) = LOWER(u.username))
+            )
+            WHERE w.sender_id = ? AND (w.target_username IS NOT NULL OR w.target_id IS NOT NULL)
+            GROUP BY LOWER(IFNULL(w.target_username, '')), w.target_id
             ORDER BY last_sent DESC
             LIMIT ?
         """, (sender_id, limit))
         rows = cur.fetchall()
         results = []
         for row in rows:
+            first_name = row["user_first_name"]
+            last_name = row["user_last_name"]
+            name = None
+            if first_name:
+                name = f"{first_name} {last_name}".strip() if last_name else first_name.strip()
+            
             results.append({
                 "target_username": row["target_username"],
-                "target_id": row["target_id"]
+                "target_id": row["target_id"],
+                "target_name": name
             })
         return results
 

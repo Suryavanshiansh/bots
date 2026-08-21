@@ -37,7 +37,7 @@ from telegram.ext import (
     ContextTypes
 )
 
-from database import init_db, save_whisper, get_whisper, mark_whisper_seen, get_all_past_targets
+from database import init_db, save_whisper, get_whisper, mark_whisper_seen, get_all_past_targets, upsert_user
 
 # Load environment variables
 env_path = os.path.join(BASE_DIR, ".env")
@@ -87,6 +87,14 @@ def keep_alive_heartbeat():
             pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user:
+        upsert_user(
+            update.effective_user.id,
+            update.effective_user.username,
+            update.effective_user.first_name,
+            update.effective_user.last_name
+        )
+
     bot_user = await context.bot.get_me()
     bot_username = bot_user.username or "whisperbot"
 
@@ -125,6 +133,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     sender = update.inline_query.from_user
+    upsert_user(sender.id, sender.username, sender.first_name, sender.last_name)
+
     bot_user = await context.bot.get_me()
     bot_username = bot_user.username or "whisperbot"
 
@@ -216,6 +226,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
         for pt in past_targets:
             t_user = pt.get("target_username")
             t_id = pt.get("target_id")
+            t_name = pt.get("target_name")
 
             w_id = uuid.uuid4().hex[:10]
             save_whisper(
@@ -227,7 +238,13 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
                 secret_text=secret_text
             )
 
-            if t_user:
+            if t_name:
+                t_title = f"👤 Send to {t_name}"
+                if t_id:
+                    t_disp = f'<a href="tg://user?id={t_id}">{t_name}</a>'
+                else:
+                    t_disp = f"@{t_user}"
+            elif t_user:
                 t_disp = f"@{t_user}"
                 t_title = f"👤 Send to @{t_user}"
             else:
@@ -283,6 +300,8 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     callback_data = query.data
+    from_user = query.from_user
+    upsert_user(from_user.id, from_user.username, from_user.first_name, from_user.last_name)
 
     if callback_data == "guide_info":
         guide_msg = (
