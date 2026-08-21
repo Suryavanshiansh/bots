@@ -152,15 +152,21 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
     target_id: Optional[int] = None
     secret_text = ""
 
-    last_word = words[-1]
-    if last_word.startswith("@") and len(last_word) > 1:
-        target_username = last_word[1:].lower()
-        secret_text = " ".join(words[:-1])
-    elif last_word.isdigit():
-        target_id = int(last_word)
-        secret_text = " ".join(words[:-1])
+    # Parse target username or target ID from anywhere in query (first, last, or middle)
+    target_index = -1
+    for i, word in enumerate(words):
+        if word.startswith("@") and len(word) > 1:
+            target_username = word[1:].lower()
+            target_index = i
+            break
+        elif word.isdigit() and len(word) >= 5:
+            target_id = int(word)
+            target_index = i
+            break
+
+    if target_index != -1:
+        secret_text = " ".join(words[:target_index] + words[target_index+1:])
     else:
-        # No target specified, treat whole query as secret text for anyone
         secret_text = query
 
     if not secret_text:
@@ -178,13 +184,16 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
         secret_text=secret_text
     )
 
-    # Format recipient display name
+    # Format recipient display name (HTML link tags @username as a clickable mention)
     if target_username:
-        target_display = f"@{target_username}"
+        target_display = f'<a href="https://t.me/{target_username}">@{target_username}</a>'
+        target_plain = f"@{target_username}"
     elif target_id:
-        target_display = f"User ID {target_id}"
+        target_display = f'<a href="tg://user?id={target_id}">User ID {target_id}</a>'
+        target_plain = f"User ID {target_id}"
     else:
         target_display = "Anyone"
+        target_plain = "Anyone"
 
     message_content = (
         f"🎁 <b>A secret whisper has been sent for {target_display}!</b>\n"
@@ -198,7 +207,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
     results = [
         InlineQueryResultArticle(
             id=whisper_id,
-            title=f"🔒 Send Secret Whisper to {target_display}",
+            title=f"🔒 Send Secret Whisper to {target_plain}",
             description=f"Secret: {secret_text[:30]}...",
             input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
             reply_markup=keyboard
@@ -279,13 +288,16 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
             mark_whisper_seen(whisper_id)
 
             if whisper["target_username"]:
-                target_display = f"@{whisper['target_username']}"
+                target_display = f'<a href="https://t.me/{whisper["target_username"]}">@{whisper["target_username"]}</a>'
             elif whisper["target_id"]:
-                target_display = f"User ID {whisper['target_id']}"
+                target_display = f'<a href="tg://user?id={whisper["target_id"]}">User ID {whisper["target_id"]}</a>'
             else:
                 target_display = "Anyone"
 
-            seen_display_name = f"@{from_user.username}" if from_user.username else (from_user.first_name or "Recipient")
+            if from_user.username:
+                seen_display_name = f'<a href="https://t.me/{from_user.username}">@{from_user.username}</a>'
+            else:
+                seen_display_name = f'<a href="tg://user?id={from_user.id}">{from_user.first_name or "Recipient"}</a>'
 
             seen_message_content = (
                 f"👁️ <b>Secret whisper for {target_display} has been read!</b>\n"
