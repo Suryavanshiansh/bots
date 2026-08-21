@@ -184,9 +184,9 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
         secret_text=secret_text
     )
 
-    # Format recipient display name (HTML link tags @username as a clickable mention)
+    # Format recipient display name (plain @username creates a MENTION entity for Telegram mention notifications)
     if target_username:
-        target_display = f'<a href="https://t.me/{target_username}">@{target_username}</a>'
+        target_display = f"@{target_username}"
         target_plain = f"@{target_username}"
     elif target_id:
         target_display = f'<a href="tg://user?id={target_id}">User ID {target_id}</a>'
@@ -288,14 +288,14 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
             mark_whisper_seen(whisper_id)
 
             if whisper["target_username"]:
-                target_display = f'<a href="https://t.me/{whisper["target_username"]}">@{whisper["target_username"]}</a>'
+                target_display = f"@{whisper['target_username']}"
             elif whisper["target_id"]:
                 target_display = f'<a href="tg://user?id={whisper["target_id"]}">User ID {whisper["target_id"]}</a>'
             else:
                 target_display = "Anyone"
 
             if from_user.username:
-                seen_display_name = f'<a href="https://t.me/{from_user.username}">@{from_user.username}</a>'
+                seen_display_name = f"@{from_user.username}"
             else:
                 seen_display_name = f'<a href="tg://user?id={from_user.id}">{from_user.first_name or "Recipient"}</a>'
 
