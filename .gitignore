@@ -1,0 +1,23 @@
+# Environment & Secrets (NEVER COMMIT)
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System & OS
+.DS_Store
+Thumbs.db
+*.log
