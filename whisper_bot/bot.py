@@ -78,35 +78,59 @@ def keep_alive_heartbeat():
             pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_user = await context.bot.get_me()
+    bot_username = bot_user.username or "whisperbot"
+
     welcome_text = (
         "🤫 <b>Welcome to Secret Whisper Bot!</b>\n\n"
-        "Send secret messages in any Telegram group or private chat that ONLY the recipient, sender, or owner can read!\n\n"
-        "<b>How to use me in any chat:</b>\n"
-        "Type in any message box:\n"
-        "• <code>@botusername [your secret message] @username</code>\n"
-        "• <code>@botusername [your secret message] [user_id]</code>\n\n"
-        "<b>Example:</b>\n"
-        "<code>@mywhisperbot Hello, meet me at 5 PM! @john_doe</code>\n\n"
-        "I will create a secret button in the group chat. Only the intended target can click and view the message! 🔒"
+        "I allow you to send secret <b>whisper messages</b> in any Telegram group or private chat! The message is hidden behind a button and can ONLY be opened by the intended recipient, the sender, or the owner.\n\n"
+        "<b>✨ How to use me in 3 simple steps:</b>\n\n"
+        "1️⃣ Open any Telegram chat or group.\n"
+        "2️⃣ Type in message box:\n"
+        "   <code>@{bot_username} [your secret message] @username</code>\n"
+        "3️⃣ Tap the popup whisper card to send!\n\n"
+        "<b>💡 Quick Examples:</b>\n"
+        "• <code>@{bot_username} Meet me at 5 PM! @john_doe</code>\n"
+        "• <code>@{bot_username} Secret code 9921 123456789</code> <i>(User ID method)</i>\n\n"
+        "Tap the buttons below to try it out or read full instructions!"
     )
-    await update.message.reply_text(welcome_text, parse_mode="HTML")
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✨ Try Sending a Whisper", switch_inline_query="Hello secret whisper! @username")
+        ],
+        [
+            InlineKeyboardButton("📖 Detailed Guide", callback_data="guide_info"),
+            InlineKeyboardButton("🆔 User ID Method", callback_data="id_info")
+        ],
+        [
+            InlineKeyboardButton("➕ Add Me to a Group", url=f"https://t.me/{bot_username}?startgroup=true")
+        ]
+    ])
+
+    await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=keyboard)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
 
 async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     sender = update.inline_query.from_user
-    
+    bot_user = await context.bot.get_me()
+    bot_username = bot_user.username or "whisperbot"
+
     if not query:
         results = [
             InlineQueryResultArticle(
                 id="help",
                 title="🤫 How to send a Secret Whisper",
-                description="Format: @botusername [secret message] @username or [user_id]",
+                description=f"Format: @{bot_username} [secret message] @username or [user_id]",
                 input_message_content=InputTextMessageContent(
-                    "<b>🤫 Secret Whisper Guide:</b>\n\n"
-                    "Type in any chat:\n"
-                    "<code>@botusername [secret message] @target_username</code>\n"
-                    "or\n"
-                    "<code>@botusername [secret message] [target_user_id]</code>",
+                    f"<b>🤫 Secret Whisper Guide:</b>\n\n"
+                    f"Type in any chat:\n"
+                    f"<code>@{bot_username} [secret message] @target_username</code>\n"
+                    f"or\n"
+                    f"<code>@{bot_username} [secret message] [target_user_id]</code>",
                     parse_mode="HTML"
                 )
             )
@@ -178,7 +202,35 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     callback_data = query.data
 
+    if callback_data == "guide_info":
+        guide_msg = (
+            "📖 <b>Detailed Whisper Guide:</b>\n\n"
+            "1️⃣ Go to any group or private chat.\n"
+            "2️⃣ In the message typing field, start by typing your bot's handle:\n"
+            "   <code>@yourbotusername Hello this is a secret! @friend_username</code>\n\n"
+            "3️⃣ A box will pop up above your keyboard. Tap it to send the whisper card into the group!\n\n"
+            "4️⃣ Only <b>@friend_username</b>, you, or the owner can click to open it!"
+        )
+        await query.answer()
+        await query.message.reply_text(guide_msg, parse_mode="HTML")
+        return
+
+    if callback_data == "id_info":
+        id_msg = (
+            "🆔 <b>Targeting Users Without Username (User ID Method):</b>\n\n"
+            "If the person does not have a Telegram `@username`, you can use their numeric <b>User ID</b> instead!\n\n"
+            "<b>Format:</b>\n"
+            "<code>@yourbotusername [secret message] [user_id]</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>@yourbotusername Meet me tonight! 123456789</code>\n\n"
+            "<i>(You can get anyone's numeric User ID using user info bots like @userinfobot).</i>"
+        )
+        await query.answer()
+        await query.message.reply_text(id_msg, parse_mode="HTML")
+        return
+
     if not callback_data.startswith("ws_"):
+        await query.answer()
         return
 
     whisper_id = callback_data[3:]
@@ -229,6 +281,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(InlineQueryHandler(inline_whisper_query))
     app.add_handler(CallbackQueryHandler(handle_whisper_callback))
 
