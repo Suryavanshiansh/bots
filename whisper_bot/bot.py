@@ -37,7 +37,7 @@ from telegram.ext import (
     ContextTypes
 )
 
-from database import init_db, save_whisper, get_whisper, mark_whisper_seen
+from database import init_db, save_whisper, get_whisper, mark_whisper_seen, get_all_past_targets
 
 # Load environment variables
 env_path = os.path.join(BASE_DIR, ".env")
@@ -172,47 +172,111 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
     if not secret_text:
         secret_text = "Secret Message"
 
-    whisper_id = uuid.uuid4().hex[:10]
+    results = []
 
-    # Save to database
-    save_whisper(
-        whisper_id=whisper_id,
-        sender_id=sender.id,
-        sender_username=sender.username,
-        target_id=target_id,
-        target_username=target_username,
-        secret_text=secret_text
-    )
-
-    # Format recipient display name (plain @username creates a MENTION entity for Telegram mention notifications)
-    if target_username:
-        target_display = f"@{target_username}"
-        target_plain = f"@{target_username}"
-    elif target_id:
-        target_display = f'<a href="tg://user?id={target_id}">User ID {target_id}</a>'
-        target_plain = f"User ID {target_id}"
-    else:
-        target_display = "Anyone"
-        target_plain = "Anyone"
-
-    message_content = (
-        f"🎁 <b>A secret whisper has been sent for</b> {target_display}!\n"
-        f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]
-    ])
-
-    results = [
-        InlineQueryResultArticle(
-            id=whisper_id,
-            title=f"🔒 Send Secret Whisper to {target_plain}",
-            description=f"Secret: {secret_text[:30]}...",
-            input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
-            reply_markup=keyboard
+    if target_index != -1 or target_username or target_id:
+        # User explicitly specified a target in the query
+        whisper_id = uuid.uuid4().hex[:10]
+        save_whisper(
+            whisper_id=whisper_id,
+            sender_id=sender.id,
+            sender_username=sender.username,
+            target_id=target_id,
+            target_username=target_username,
+            secret_text=secret_text
         )
-    ]
+
+        if target_username:
+            target_display = f"@{target_username}"
+            target_plain = f"@{target_username}"
+        else:
+            target_display = f'<a href="tg://user?id={target_id}">User ID {target_id}</a>'
+            target_plain = f"User ID {target_id}"
+
+        message_content = (
+            f"🎁 <b>A secret whisper has been sent for</b> {target_display}!\n"
+            f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]
+        ])
+        results.append(
+            InlineQueryResultArticle(
+                id=whisper_id,
+                title=f"🔒 Send Secret Whisper to {target_plain}",
+                description=f"Secret: {secret_text[:30]}...",
+                input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
+                reply_markup=keyboard
+            )
+        )
+    else:
+        # No target explicitly typed, show past recipients list as quick selection options!
+        past_targets = get_all_past_targets(sender.id)
+
+        for pt in past_targets:
+            t_user = pt.get("target_username")
+            t_id = pt.get("target_id")
+
+            w_id = uuid.uuid4().hex[:10]
+            save_whisper(
+                whisper_id=w_id,
+                sender_id=sender.id,
+                sender_username=sender.username,
+                target_id=t_id,
+                target_username=t_user,
+                secret_text=secret_text
+            )
+
+            if t_user:
+                t_disp = f"@{t_user}"
+                t_title = f"👤 Send to @{t_user}"
+            else:
+                t_disp = f'<a href="tg://user?id={t_id}">User ID {t_id}</a>'
+                t_title = f"👤 Send to User ID {t_id}"
+
+            m_content = (
+                f"🎁 <b>A secret whisper has been sent for</b> {t_disp}!\n"
+                f"<i>Only</i> {t_disp} <i>or the sender can open this whisper.</i>"
+            )
+            k_board = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{w_id}")]
+            ])
+            results.append(
+                InlineQueryResultArticle(
+                    id=w_id,
+                    title=t_title,
+                    description=f"Secret: {secret_text[:30]}...",
+                    input_message_content=InputTextMessageContent(m_content, parse_mode="HTML"),
+                    reply_markup=k_board
+                )
+            )
+
+        # Always include option for Anyone as well
+        anyone_id = uuid.uuid4().hex[:10]
+        save_whisper(
+            whisper_id=anyone_id,
+            sender_id=sender.id,
+            sender_username=sender.username,
+            target_id=None,
+            target_username=None,
+            secret_text=secret_text
+        )
+        anyone_content = (
+            f"🎁 <b>A secret whisper has been sent for Anyone!</b>\n"
+            f"<i>Only Anyone or the sender can open this whisper.</i>"
+        )
+        anyone_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{anyone_id}")]
+        ])
+        results.append(
+            InlineQueryResultArticle(
+                id=anyone_id,
+                title="🌐 Send to Anyone",
+                description=f"Secret: {secret_text[:30]}...",
+                input_message_content=InputTextMessageContent(anyone_content, parse_mode="HTML"),
+                reply_markup=anyone_keyboard
+            )
+        )
 
     await update.inline_query.answer(results, cache_time=1)
 
