@@ -1,12 +1,21 @@
 import logging
 import os
 import sys
+import io
 import uuid
 import threading
 import time
 import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
+
+# Ensure UTF-8 output encoding for Windows console logs
+if sys.platform == "win32":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -63,7 +72,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 def start_health_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"🌐 Health check HTTP server listening on port {port}")
+    print(f"[HTTP] Health check server listening on port {port}")
     server.serve_forever()
 
 def keep_alive_heartbeat():
@@ -285,8 +294,8 @@ def main():
     app.add_handler(InlineQueryHandler(inline_whisper_query))
     app.add_handler(CallbackQueryHandler(handle_whisper_callback))
 
-    print("\n🤫 Telegram Secret Whisper Bot is starting...")
-    print(f"👑 Owner ID configured: {OWNER_ID if OWNER_ID > 0 else 'None'}")
+    print("\n[BOT] Telegram Secret Whisper Bot is starting...")
+    print(f"[BOT] Owner ID configured: {OWNER_ID if OWNER_ID > 0 else 'None'}")
     print("Press Ctrl+C to stop.\n")
     app.run_polling()
 
