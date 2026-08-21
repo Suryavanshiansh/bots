@@ -196,8 +196,8 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
         target_plain = "Anyone"
 
     message_content = (
-        f"🎁 <b>A secret whisper has been sent for {target_display}!</b>\n"
-        f"<i>Only {target_display} or the sender can open this whisper.</i>"
+        f"🎁 <b>A secret whisper has been sent for</b> {target_display}!\n"
+        f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -300,8 +300,8 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
                 seen_display_name = f'<a href="tg://user?id={from_user.id}">{from_user.first_name or "Recipient"}</a>'
 
             seen_message_content = (
-                f"👁️ <b>Secret whisper for {target_display} has been read!</b>\n"
-                f"<i>This whisper was opened by {seen_display_name}.</i>"
+                f"👁️ <b>Secret whisper for</b> {target_display} <b>has been read!</b>\n"
+                f"<i>This whisper was opened by</i> {seen_display_name}."
             )
 
             seen_keyboard = InlineKeyboardMarkup([
