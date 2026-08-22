@@ -491,7 +491,7 @@ async def delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, reason_type: str = "edit", auto_delete_sec: int = 10):
+async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, reason_type: str = "edit", auto_delete_sec: int = 0):
     try:
         bot_user = await context.bot.get_me()
         bot_username = bot_user.username or "EditGuardianBot"
@@ -518,20 +518,13 @@ async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        notice_msg = await context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
             text=notice_text,
             parse_mode="Markdown",
             reply_markup=reply_markup,
             disable_web_page_preview=True
         )
-        
-        if auto_delete_sec > 0 and context.job_queue:
-            context.job_queue.run_once(
-                delete_notice_job,
-                auto_delete_sec,
-                data={"chat_id": chat_id, "message_id": notice_msg.message_id}
-            )
     except Exception as e:
         logger.warning(f"Could not send deletion notice in chat {chat_id}: {e}")
 
@@ -556,19 +549,13 @@ async def delete_media_job(context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        notice_msg = await context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
             text=notice_text,
             parse_mode="Markdown",
             reply_markup=reply_markup,
             disable_web_page_preview=True
         )
-        if context.job_queue:
-            context.job_queue.run_once(
-                delete_notice_job,
-                10,
-                data={"chat_id": chat_id, "message_id": notice_msg.message_id}
-            )
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} in chat {chat_id}: {e}")
 
