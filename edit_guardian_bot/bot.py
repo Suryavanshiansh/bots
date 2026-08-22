@@ -655,18 +655,18 @@ def main():
     # Build python-telegram-bot application with JobQueue
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Register Command Handlers
+    # Register Command Handlers (with aliases)
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("set_delay", set_delay_command))
-    app.add_handler(CommandHandler("get_delay", get_delay_command))
-    app.add_handler(CommandHandler("edit_guard", edit_guard_command))
-    app.add_handler(CommandHandler("sticker_guard", sticker_guard_command))
-    app.add_handler(CommandHandler("auth_edit", auth_edit_command))
-    app.add_handler(CommandHandler("unauth_edit", unauth_edit_command))
-    app.add_handler(CommandHandler("auth_sticker", auth_sticker_command))
-    app.add_handler(CommandHandler("unauth_sticker", unauth_sticker_command))
-    app.add_handler(CommandHandler("list_approved", list_approved_command))
+    app.add_handler(CommandHandler(["set_delay", "setdelay", "set"], set_delay_command))
+    app.add_handler(CommandHandler(["get_delay", "getdelay", "get"], get_delay_command))
+    app.add_handler(CommandHandler(["edit_guard", "editguard", "edit"], edit_guard_command))
+    app.add_handler(CommandHandler(["sticker_guard", "stickerguard", "sticker"], sticker_guard_command))
+    app.add_handler(CommandHandler(["auth_edit", "authedit"], auth_edit_command))
+    app.add_handler(CommandHandler(["unauth_edit", "unauthedit"], unauth_edit_command))
+    app.add_handler(CommandHandler(["auth_sticker", "authsticker"], auth_sticker_command))
+    app.add_handler(CommandHandler(["unauth_sticker", "unauthsticker"], unauth_sticker_command))
+    app.add_handler(CommandHandler(["list_approved", "listapproved", "approved"], list_approved_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
 
