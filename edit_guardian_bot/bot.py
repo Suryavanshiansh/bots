@@ -361,13 +361,58 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 # --- JOB QUEUE AUTO-DELETE TASK ---
 
-async def delete_media_job(context: ContextTypes.DEFAULT_TYPE):
+async def delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data["chat_id"]
     message_id = job_data["message_id"]
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, reason: str, auto_delete_sec: int = 10):
+    try:
+        bot_user = await context.bot.get_me()
+        bot_name = bot_user.first_name or "Edit Guardian Bot"
+        username = f"@{user.username}" if (user and user.username) else (user.first_name if user else "User")
+        
+        notice_text = (
+            f"🛡️ **{bot_name}** deleted a message from **{username}**\n"
+            f"📌 **Reason:** {reason}"
+        )
+        notice_msg = await context.bot.send_message(chat_id=chat_id, text=notice_text, parse_mode="Markdown")
+        
+        if auto_delete_sec > 0 and context.job_queue:
+            context.job_queue.run_once(
+                delete_notice_job,
+                auto_delete_sec,
+                data={"chat_id": chat_id, "message_id": notice_msg.message_id}
+            )
+    except Exception as e:
+        logger.warning(f"Could not send deletion notice in chat {chat_id}: {e}")
+
+async def delete_media_job(context: ContextTypes.DEFAULT_TYPE):
+    job_data = context.job.data
+    chat_id = job_data["chat_id"]
+    message_id = job_data["message_id"]
+    username = job_data.get("username", "User")
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Auto-deleted scheduled media message {message_id} in chat {chat_id}")
+        
+        bot_user = await context.bot.get_me()
+        bot_name = bot_user.first_name or "Edit Guardian Bot"
+        notice_text = (
+            f"🛡️ **{bot_name}** deleted a message from **{username}**\n"
+            f"📌 **Reason:** Media auto-delete timer expired"
+        )
+        notice_msg = await context.bot.send_message(chat_id=chat_id, text=notice_text, parse_mode="Markdown")
+        if context.job_queue:
+            context.job_queue.run_once(
+                delete_notice_job,
+                10,
+                data={"chat_id": chat_id, "message_id": notice_msg.message_id}
+            )
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} in chat {chat_id}: {e}")
 
@@ -378,7 +423,8 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
         return
 
     chat_id = update.edited_message.chat.id
-    user_id = update.edited_message.from_user.id
+    user = update.edited_message.from_user
+    user_id = user.id
     settings = get_chat_settings(chat_id)
 
     if not settings["delete_edited"]:
@@ -388,10 +434,16 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
     if await is_group_admin(update, context, user_id) or is_user_edit_approved(chat_id, user_id):
         return
 
-    # User is unapproved -> delete edited message
+    # User is unapproved -> delete edited message & send notice
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=update.edited_message.message_id)
         logger.info(f"Deleted edited message {update.edited_message.message_id} from unapproved user {user_id} in chat {chat_id}")
+        await send_deletion_notice(
+            context,
+            chat_id,
+            user,
+            "Edited message deletion condition (unapproved member)"
+        )
     except Exception as e:
         logger.error(f"Failed to delete edited message in chat {chat_id}: {e}")
 
@@ -400,7 +452,8 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
         return
 
     chat_id = update.message.chat.id
-    user_id = update.message.from_user.id
+    user = update.message.from_user
+    user_id = user.id
     msg = update.message
     settings = get_chat_settings(chat_id)
 
@@ -412,23 +465,35 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
     sticker_mode = settings["sticker_mode"]
     
     if msg.sticker:
-        if sticker_mode == "all" or (sticker_mode == "nsfw_only" and is_sticker_explicit(msg.sticker)):
+        if sticker_mode == "all":
             try:
                 await msg.delete()
-                logger.info(f"Deleted restricted/NSFW sticker from unapproved user {user_id} in chat {chat_id}")
+                logger.info(f"Deleted sticker from unapproved user {user_id} in chat {chat_id}")
+                await send_deletion_notice(context, chat_id, user, "Sticker restriction condition (unapproved member)")
                 return
             except Exception as e:
                 logger.error(f"Failed to delete sticker in chat {chat_id}: {e}")
+                return
+        elif sticker_mode == "nsfw_only" and is_sticker_explicit(msg.sticker):
+            try:
+                await msg.delete()
+                logger.info(f"Deleted NSFW sticker from unapproved user {user_id} in chat {chat_id}")
+                await send_deletion_notice(context, chat_id, user, "18+ NSFW sticker condition (unapproved member)")
+                return
+            except Exception as e:
+                logger.error(f"Failed to delete NSFW sticker in chat {chat_id}: {e}")
                 return
 
     # Handle general media auto-deletion (photo, video, animation/gif, document, audio, voice)
     is_media = bool(msg.photo or msg.video or msg.animation or msg.document or msg.audio or msg.voice or msg.sticker)
     if is_media:
         delay_minutes = settings["media_delay_minutes"]
+        username = f"@{user.username}" if (user and user.username) else (user.first_name if user else "User")
         if delay_minutes == 0:
             try:
                 await msg.delete()
                 logger.info(f"Instantly deleted media from unapproved user {user_id} in chat {chat_id}")
+                await send_deletion_notice(context, chat_id, user, "Media auto-delete condition (instant deletion)")
             except Exception as e:
                 logger.error(f"Failed instant media deletion in chat {chat_id}: {e}")
         elif delay_minutes > 0 and context.job_queue:
@@ -436,7 +501,7 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             context.job_queue.run_once(
                 delete_media_job,
                 delay_seconds,
-                data={"chat_id": chat_id, "message_id": msg.message_id}
+                data={"chat_id": chat_id, "message_id": msg.message_id, "username": username}
             )
 
 # Main Application Entrypoint
