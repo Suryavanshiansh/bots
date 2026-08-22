@@ -52,7 +52,9 @@ from database import (
     get_approved_sticker_users,
     upsert_user,
     get_user_by_username,
-    get_user_by_id
+    get_user_by_id,
+    get_bot_stats,
+    get_all_chat_ids
 )
 
 # Load environment variables
@@ -97,8 +99,10 @@ def start_health_server():
     except Exception as e:
         logger.warning(f"[HTTP] Health server could not start on port {port}: {e}")
 
-# Helper: Check if user is Group Admin or Owner
+# Helper: Check if user is Group Admin or Bot Owner
 async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    if OWNER_ID != 0 and user_id == OWNER_ID:
+        return True
     if update.effective_chat.type == "private":
         return True
     try:
@@ -406,6 +410,51 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown"
     )
 
+# --- BOT OWNER EXCLUSIVE COMMANDS ---
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if OWNER_ID != 0 and update.effective_user.id != OWNER_ID:
+        return
+    stats = get_bot_stats()
+    msg = (
+        "👑 **Edit Guardian Bot Owner Panel & Statistics**\n\n"
+        f"👥 **Total Cached Users:** `{stats['cached_users']}`\n"
+        f"💬 **Active Protected Chats:** `{stats['chats']}`\n"
+        f"✏️ **Approved Edit Members:** `{stats['approved_edits']}`\n"
+        f"🖼️ **Approved Sticker Members:** `{stats['approved_stickers']}`"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if OWNER_ID != 0 and update.effective_user.id != OWNER_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/broadcast <your message>`", parse_mode="Markdown")
+        return
+    
+    broadcast_text = " ".join(context.args)
+    chat_ids = get_all_chat_ids()
+    success = 0
+    failed = 0
+    
+    for cid in chat_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=cid,
+                text=f"📢 **Bot Owner Announcement:**\n\n{broadcast_text}",
+                parse_mode="Markdown"
+            )
+            success += 1
+        except Exception:
+            failed += 1
+            
+    await update.message.reply_text(
+        f"📢 **Broadcast Results:**\n\n"
+        f"🟢 **Successfully Sent:** {success} chats\n"
+        f"🔴 **Failed/Left:** {failed} chats",
+        parse_mode="Markdown"
+    )
+
 # --- JOB QUEUE AUTO-DELETE TASK ---
 
 async def delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
@@ -512,6 +561,10 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
     if not settings["delete_edited"]:
         return
 
+    # Global Bot Owner Immunity Check
+    if OWNER_ID != 0 and user_id == OWNER_ID:
+        return
+
     # Check if user is explicitly authorized for edits (applies to both admins & regular members)
     if is_user_edit_approved(chat_id, user_id):
         return
@@ -538,6 +591,10 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
     user_id = user.id
     msg = update.message
     settings = get_chat_settings(chat_id)
+
+    # Global Bot Owner Immunity Check
+    if OWNER_ID != 0 and user_id == OWNER_ID:
+        return
 
     # Check if user is admin or authorized for stickers/media
     if await is_group_admin(update, context, user_id) or is_user_sticker_approved(chat_id, user_id):
@@ -610,6 +667,8 @@ def main():
     app.add_handler(CommandHandler("auth_sticker", auth_sticker_command))
     app.add_handler(CommandHandler("unauth_sticker", unauth_sticker_command))
     app.add_handler(CommandHandler("list_approved", list_approved_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
 
     # Register Edited Message Listener (Group 1)
     app.add_handler(TypeHandler(Update, handle_edited_message_update), group=1)

@@ -210,3 +210,18 @@ def get_approved_sticker_users(chat_id: int):
     with get_connection() as conn:
         cursor = conn.execute("SELECT user_id FROM approved_sticker_users WHERE chat_id = ?", (chat_id,))
         return [row["user_id"] for row in cursor.fetchall()]
+
+# --- Bot Owner Stats & Global Data ---
+
+def get_bot_stats():
+    with get_connection() as conn:
+        chats = conn.execute("SELECT COUNT(*) as cnt FROM chat_settings").fetchone()["cnt"]
+        edits = conn.execute("SELECT COUNT(*) as cnt FROM approved_edit_users").fetchone()["cnt"]
+        stickers = conn.execute("SELECT COUNT(*) as cnt FROM approved_sticker_users").fetchone()["cnt"]
+        users = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()["cnt"]
+        return {"chats": chats, "approved_edits": edits, "approved_stickers": stickers, "cached_users": users}
+
+def get_all_chat_ids():
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT chat_id FROM chat_settings")
+        return [row["chat_id"] for row in cursor.fetchall()]
