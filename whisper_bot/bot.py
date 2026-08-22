@@ -148,11 +148,12 @@ def resolve_target_display_info(target_username: Optional[str], target_id: Optio
         db_u = get_user_by_id(target_id)
         if db_u and db_u.get("first_name"):
             name = db_u["first_name"].strip()
+            return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
         elif target_username:
             name = target_username.lstrip("@")
+            return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
         else:
-            name = "Recipient"
-        return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
+            return f'<a href="tg://user?id={target_id}"><b>User</b></a>', "User"
 
     if target_username:
         db_u = get_user_by_username(target_username)
@@ -222,6 +223,32 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if target_index != -1 or target_username or target_id:
         # User explicitly specified a target in the query
+        # Fetch target user profile from Telegram if not in database yet
+        if target_id:
+            db_u = get_user_by_id(target_id)
+            if not db_u or not db_u.get("first_name"):
+                try:
+                    chat = await context.bot.get_chat(target_id)
+                    if chat and chat.first_name:
+                        upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
+                        if chat.username:
+                            target_username = chat.username.lower()
+                except Exception as e:
+                    logging.debug(f"Could not fetch chat for user ID {target_id}: {e}")
+        elif target_username:
+            db_u = get_user_by_username(target_username)
+            if db_u and db_u.get("user_id"):
+                target_id = db_u["user_id"]
+            else:
+                try:
+                    chat = await context.bot.get_chat(f"@{target_username}")
+                    if chat:
+                        target_id = chat.id
+                        if chat.first_name:
+                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
+                except Exception as e:
+                    logging.debug(f"Could not fetch chat for @{target_username}: {e}")
+
         whisper_id = uuid.uuid4().hex[:10]
         save_whisper(
             whisper_id=whisper_id,
@@ -238,6 +265,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             f"🎁 <b>A secret whisper has been sent to</b> {target_display}!\n"
             f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
         )
+
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]
         ])
