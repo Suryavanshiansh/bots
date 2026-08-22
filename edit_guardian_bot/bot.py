@@ -343,6 +343,34 @@ async def sticker_guard_command(update: Update, context: ContextTypes.DEFAULT_TY
     update_sticker_mode(update.effective_chat.id, mode)
     await msg.reply_text(f"✅ Sticker Guard mode set to <b>{mode}</b>.", parse_mode="HTML")
 
+async def sticker_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
+        return
+
+    if not await is_group_admin(update, context, update.effective_user.id):
+        await msg.reply_text("🚫 Only group administrators can use this command.")
+        return
+
+    update_sticker_mode(update.effective_chat.id, "off")
+    await msg.reply_text("✅ Sticker Guard mode set to <b>off</b> (Sticker & NSFW restrictions disabled).", parse_mode="HTML")
+
+async def sticker_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
+        return
+
+    if not await is_group_admin(update, context, update.effective_user.id):
+        await msg.reply_text("🚫 Only group administrators can use this command.")
+        return
+
+    update_sticker_mode(update.effective_chat.id, "nsfw_only")
+    await msg.reply_text("✅ Sticker Guard mode set to <b>nsfw_only</b> (18+ NSFW stickers will be deleted).", parse_mode="HTML")
+
 async def auth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if not msg or update.effective_chat.type == "private":
@@ -692,6 +720,8 @@ def main():
     app.add_handler(CommandHandler(["get_delay", "getdelay", "get"], get_delay_command))
     app.add_handler(CommandHandler(["edit_guard", "editguard", "edit"], edit_guard_command))
     app.add_handler(CommandHandler(["sticker_guard", "stickerguard", "sticker"], sticker_guard_command))
+    app.add_handler(CommandHandler(["sticker_off", "stickeroff", "nsfw_off", "nsfwoff"], sticker_off_command))
+    app.add_handler(CommandHandler(["sticker_on", "stickeron", "nsfw_on", "nsfwon"], sticker_on_command))
     app.add_handler(CommandHandler(["auth_edit", "authedit"], auth_edit_command))
     app.add_handler(CommandHandler(["unauth_edit", "unauthedit"], unauth_edit_command))
     app.add_handler(CommandHandler(["auth_sticker", "authsticker"], auth_sticker_command))
