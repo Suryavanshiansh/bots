@@ -565,32 +565,11 @@ async def delete_media_job(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data["chat_id"]
     message_id = job_data["message_id"]
-    first_name = job_data.get("first_name", "USER")
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Auto-deleted scheduled media message {message_id} in chat {chat_id}")
-        
-        bot_user = await context.bot.get_me()
-        bot_username = bot_user.username or "EditGuardianBot"
-        notice_text = f"***{first_name}*** **MEDIA DELETED AFTER TIMER EXPIRED 🤡.**"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("ADD ME ↗️", url=f"https://t.me/{bot_username}?startgroup=true"),
-                InlineKeyboardButton("SOLUTION ↗️", url=SUPPORT_CHAT_URL)
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=notice_text,
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-            disable_web_page_preview=True
-        )
     except Exception as e:
-        logger.warning(f"Could not delete message {message_id} in chat {chat_id}: {e}")
+        logger.warning(f"Could not delete media message {message_id} in chat {chat_id}: {e}")
 
 # --- UPDATE EVENT HANDLERS ---
 
@@ -657,7 +636,6 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             try:
                 await msg.delete()
                 logger.info(f"Deleted sticker from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, reason_type="sticker_all")
                 return
             except Exception as e:
                 logger.error(f"Failed to delete sticker in chat {chat_id}: {e}")
@@ -666,7 +644,6 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             try:
                 await msg.delete()
                 logger.info(f"Deleted NSFW sticker from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, reason_type="nsfw_sticker")
                 return
             except Exception as e:
                 logger.error(f"Failed to delete NSFW sticker in chat {chat_id}: {e}")
@@ -681,7 +658,6 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             try:
                 await msg.delete()
                 logger.info(f"Instantly deleted media from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, reason_type="media_instant")
             except Exception as e:
                 logger.error(f"Failed instant media deletion in chat {chat_id}: {e}")
         elif delay_minutes > 0 and context.job_queue:
