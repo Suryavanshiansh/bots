@@ -100,6 +100,17 @@ def start_health_server():
     except Exception as e:
         logger.warning(f"[HTTP] Health server could not start on port {port}: {e}")
 
+def keep_alive_heartbeat():
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        return
+    while True:
+        time.sleep(300)  # Ping self every 5 minutes automatically
+        try:
+            urllib.request.urlopen(url, timeout=10)
+        except Exception:
+            pass
+
 # Helper: Check if user is Group Admin or Bot Owner
 async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     if OWNER_ID != 0 and user_id == OWNER_ID:
@@ -692,6 +703,7 @@ def main():
 
     # Start optional background HTTP health check server for Render/Railway
     threading.Thread(target=start_health_server, daemon=True).start()
+    threading.Thread(target=keep_alive_heartbeat, daemon=True).start()
 
     # Build python-telegram-bot application with JobQueue
     app = ApplicationBuilder().token(BOT_TOKEN).build()
