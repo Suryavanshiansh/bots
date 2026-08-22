@@ -420,32 +420,19 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
         secret_text = whisper["secret_text"]
         await query.answer(text=f"🤫 Secret Whisper{role_label}:\n\n{secret_text}", show_alert=True)
 
-        # If opened by receiver for the first time, mark as seen and update message in Telegram chat
+        # If opened by receiver for the first time, mark as seen and update button markup in Telegram chat
         if is_receiver and not whisper.get("is_seen"):
             mark_whisper_seen(whisper_id)
 
-            target_display, _ = resolve_target_display_info(whisper.get("target_username"), whisper.get("target_id"))
-
-            seen_first_name = from_user.first_name or "Recipient"
-            seen_display_name = f'<a href="tg://user?id={from_user.id}"><b>{seen_first_name}</b></a>'
-
-            seen_message_content = (
-                f"👁️ <b>Secret whisper for</b> {target_display} <b>has been read!</b>\n"
-                f"<i>This whisper was opened by</i> {seen_display_name}."
-            )
-
+            seen_name = from_user.first_name or (f"@{from_user.username}" if from_user.username else "Recipient")
             seen_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👁️ Whisper Seen (Show Secret) 🤫", callback_data=f"ws_{whisper_id}")]
+                [InlineKeyboardButton(f"👁️ Seen by {seen_name} (Show Secret) 🤫", callback_data=f"ws_{whisper_id}")]
             ])
 
             try:
-                await query.edit_message_text(
-                    text=seen_message_content,
-                    parse_mode="HTML",
-                    reply_markup=seen_keyboard
-                )
+                await query.edit_message_reply_markup(reply_markup=seen_keyboard)
             except Exception as e:
-                logging.warning(f"Could not edit whisper message to seen: {e}")
+                logging.warning(f"Could not edit whisper reply markup to seen: {e}")
     else:
         await query.answer(
             text="❌ This secret whisper is not for you! Only the intended recipient or sender can open it.",
