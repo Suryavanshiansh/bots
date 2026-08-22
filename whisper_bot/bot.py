@@ -37,7 +37,16 @@ from telegram.ext import (
     ContextTypes
 )
 
-from database import init_db, save_whisper, get_whisper, mark_whisper_seen, get_all_past_targets, upsert_user
+from database import (
+    init_db,
+    save_whisper,
+    get_whisper,
+    mark_whisper_seen,
+    get_all_past_targets,
+    upsert_user,
+    get_user_by_id,
+    get_user_by_username
+)
 
 # Load environment variables
 env_path = os.path.join(BASE_DIR, ".env")
@@ -130,6 +139,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
+def resolve_target_display_info(target_username: Optional[str], target_id: Optional[int]) -> tuple[str, str]:
+    """
+    Resolves target to (html_link_display, plain_first_name).
+    Always prioritizes First Name over @username or User ID.
+    """
+    if target_id:
+        db_u = get_user_by_id(target_id)
+        if db_u and db_u.get("first_name"):
+            name = db_u["first_name"].strip()
+        elif target_username:
+            name = target_username.lstrip("@")
+        else:
+            name = "Recipient"
+        return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
+
+    if target_username:
+        db_u = get_user_by_username(target_username)
+        if db_u and db_u.get("first_name"):
+            name = db_u["first_name"].strip()
+            uid = db_u["user_id"]
+            return f'<a href="tg://user?id={uid}"><b>{name}</b></a>', name
+        else:
+            name = target_username.lstrip("@")
+            return f"<b>{name}</b>", name
+
+    return "<b>Anyone</b>", "Anyone"
+
 async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     sender = update.inline_query.from_user
@@ -196,15 +232,10 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             secret_text=secret_text
         )
 
-        if target_username:
-            target_display = f"@{target_username}"
-            target_plain = f"@{target_username}"
-        else:
-            target_display = f'<a href="tg://user?id={target_id}">User ID {target_id}</a>'
-            target_plain = f"User ID {target_id}"
+        target_display, target_plain = resolve_target_display_info(target_username, target_id)
 
         message_content = (
-            f"🎁 <b>A secret whisper has been sent for</b> {target_display}!\n"
+            f"🎁 <b>A secret whisper has been sent to</b> {target_display}!\n"
             f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
         )
         keyboard = InlineKeyboardMarkup([
@@ -238,21 +269,16 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
                 secret_text=secret_text
             )
 
+            t_disp, t_plain = resolve_target_display_info(t_user, t_id)
             if t_name:
-                t_title = f"👤 Send to {t_name}"
+                t_plain = t_name.strip()
                 if t_id:
-                    t_disp = f'<a href="tg://user?id={t_id}">{t_name}</a>'
-                else:
-                    t_disp = f"@{t_user}"
-            elif t_user:
-                t_disp = f"@{t_user}"
-                t_title = f"👤 Send to @{t_user}"
-            else:
-                t_disp = f'<a href="tg://user?id={t_id}">User ID {t_id}</a>'
-                t_title = f"👤 Send to User ID {t_id}"
+                    t_disp = f'<a href="tg://user?id={t_id}"><b>{t_plain}</b></a>'
+
+            t_title = f"👤 Send to {t_plain}"
 
             m_content = (
-                f"🎁 <b>A secret whisper has been sent for</b> {t_disp}!\n"
+                f"🎁 <b>A secret whisper has been sent to</b> {t_disp}!\n"
                 f"<i>Only</i> {t_disp} <i>or the sender can open this whisper.</i>"
             )
             k_board = InlineKeyboardMarkup([
@@ -279,7 +305,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             secret_text=secret_text
         )
         anyone_content = (
-            f"🎁 <b>A secret whisper has been sent for Anyone!</b>\n"
+            f"🎁 <b>A secret whisper has been sent to Anyone!</b>\n"
             f"<i>Only Anyone or the sender can open this whisper.</i>"
         )
         anyone_keyboard = InlineKeyboardMarkup([
@@ -370,17 +396,10 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
         if is_receiver and not whisper.get("is_seen"):
             mark_whisper_seen(whisper_id)
 
-            if whisper["target_username"]:
-                target_display = f"@{whisper['target_username']}"
-            elif whisper["target_id"]:
-                target_display = f'<a href="tg://user?id={whisper["target_id"]}">User ID {whisper["target_id"]}</a>'
-            else:
-                target_display = "Anyone"
+            target_display, _ = resolve_target_display_info(whisper.get("target_username"), whisper.get("target_id"))
 
-            if from_user.username:
-                seen_display_name = f"@{from_user.username}"
-            else:
-                seen_display_name = f'<a href="tg://user?id={from_user.id}">{from_user.first_name or "Recipient"}</a>'
+            seen_first_name = from_user.first_name or "Recipient"
+            seen_display_name = f'<a href="tg://user?id={from_user.id}"><b>{seen_first_name}</b></a>'
 
             seen_message_content = (
                 f"👁️ <b>Secret whisper for</b> {target_display} <b>has been read!</b>\n"

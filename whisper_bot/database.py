@@ -63,6 +63,25 @@ def upsert_user(
         """, (user_id, username, first_name, last_name))
         conn.commit()
 
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    if not user_id:
+        return None
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    if not username:
+        return None
+    clean = username.lstrip("@").lower()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE LOWER(username) = ?", (clean,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
 def save_whisper(
     whisper_id: str,
     sender_id: int,
