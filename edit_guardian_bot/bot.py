@@ -477,8 +477,8 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
     if not settings["delete_edited"]:
         return
 
-    # Check if user is admin or explicitly authorized for edits
-    if await is_group_admin(update, context, user_id) or is_user_edit_approved(chat_id, user_id):
+    # Check if user is explicitly authorized for edits (applies to both admins & regular members)
+    if is_user_edit_approved(chat_id, user_id):
         return
 
     # User is unapproved -> delete edited message & send notice
