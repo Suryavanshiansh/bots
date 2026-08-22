@@ -417,17 +417,40 @@ async def delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, reason: str, auto_delete_sec: int = 10):
+async def send_deletion_notice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, reason_type: str = "edit", auto_delete_sec: int = 10):
     try:
         bot_user = await context.bot.get_me()
-        bot_name = bot_user.first_name or "Edit Guardian Bot"
-        username = f"@{user.username}" if (user and user.username) else (user.first_name if user else "User")
+        bot_username = bot_user.username or "EditGuardianBot"
         
-        notice_text = (
-            f"🛡️ **{bot_name}** deleted a message from **{username}**\n"
-            f"📌 **Reason:** {reason}"
+        # Always use User's First Name ONLY (No @username, No user ID)
+        first_name = user.first_name if (user and user.first_name) else "USER"
+        
+        if reason_type == "edit":
+            notice_text = f"***{first_name}*** **JUST EDIT A MESSAGE I DELETE IT 🤡.**"
+        elif reason_type == "nsfw_sticker":
+            notice_text = f"***{first_name}*** **SENT AN 18+ NSFW STICKER I DELETE IT 🤡.**"
+        elif reason_type == "sticker_all":
+            notice_text = f"***{first_name}*** **SENT A STICKER I DELETE IT 🤡.**"
+        elif reason_type == "media_instant":
+            notice_text = f"***{first_name}*** **SENT RESTRICTED MEDIA I DELETE IT 🤡.**"
+        else:
+            notice_text = f"***{first_name}*** **SENT RESTRICTED CONTENT I DELETE IT 🤡.**"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("ADD ME ↗️", url=f"https://t.me/{bot_username}?startgroup=true"),
+                InlineKeyboardButton("SOLUTION ↗️", url=SUPPORT_CHAT_URL)
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        notice_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=notice_text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
         )
-        notice_msg = await context.bot.send_message(chat_id=chat_id, text=notice_text, parse_mode="Markdown")
         
         if auto_delete_sec > 0 and context.job_queue:
             context.job_queue.run_once(
@@ -442,18 +465,30 @@ async def delete_media_job(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data["chat_id"]
     message_id = job_data["message_id"]
-    username = job_data.get("username", "User")
+    first_name = job_data.get("first_name", "USER")
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Auto-deleted scheduled media message {message_id} in chat {chat_id}")
         
         bot_user = await context.bot.get_me()
-        bot_name = bot_user.first_name or "Edit Guardian Bot"
-        notice_text = (
-            f"🛡️ **{bot_name}** deleted a message from **{username}**\n"
-            f"📌 **Reason:** Media auto-delete timer expired"
+        bot_username = bot_user.username or "EditGuardianBot"
+        notice_text = f"***{first_name}*** **MEDIA DELETED AFTER TIMER EXPIRED 🤡.**"
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("ADD ME ↗️", url=f"https://t.me/{bot_username}?startgroup=true"),
+                InlineKeyboardButton("SOLUTION ↗️", url=SUPPORT_CHAT_URL)
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        notice_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=notice_text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
         )
-        notice_msg = await context.bot.send_message(chat_id=chat_id, text=notice_text, parse_mode="Markdown")
         if context.job_queue:
             context.job_queue.run_once(
                 delete_notice_job,
@@ -489,7 +524,7 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
             context,
             chat_id,
             user,
-            "Edited message deletion condition (unapproved member)"
+            reason_type="edit"
         )
     except Exception as e:
         logger.error(f"Failed to delete edited message in chat {chat_id}: {e}")
@@ -516,7 +551,7 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             try:
                 await msg.delete()
                 logger.info(f"Deleted sticker from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, "Sticker restriction condition (unapproved member)")
+                await send_deletion_notice(context, chat_id, user, reason_type="sticker_all")
                 return
             except Exception as e:
                 logger.error(f"Failed to delete sticker in chat {chat_id}: {e}")
@@ -525,7 +560,7 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             try:
                 await msg.delete()
                 logger.info(f"Deleted NSFW sticker from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, "18+ NSFW sticker condition (unapproved member)")
+                await send_deletion_notice(context, chat_id, user, reason_type="nsfw_sticker")
                 return
             except Exception as e:
                 logger.error(f"Failed to delete NSFW sticker in chat {chat_id}: {e}")
@@ -535,12 +570,12 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
     is_media = bool(msg.photo or msg.video or msg.animation or msg.document or msg.audio or msg.voice or msg.sticker)
     if is_media:
         delay_minutes = settings["media_delay_minutes"]
-        username = f"@{user.username}" if (user and user.username) else (user.first_name if user else "User")
+        first_name = user.first_name if (user and user.first_name) else "USER"
         if delay_minutes == 0:
             try:
                 await msg.delete()
                 logger.info(f"Instantly deleted media from unapproved user {user_id} in chat {chat_id}")
-                await send_deletion_notice(context, chat_id, user, "Media auto-delete condition (instant deletion)")
+                await send_deletion_notice(context, chat_id, user, reason_type="media_instant")
             except Exception as e:
                 logger.error(f"Failed instant media deletion in chat {chat_id}: {e}")
         elif delay_minutes > 0 and context.job_queue:
@@ -548,7 +583,7 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
             context.job_queue.run_once(
                 delete_media_job,
                 delay_seconds,
-                data={"chat_id": chat_id, "message_id": msg.message_id, "username": username}
+                data={"chat_id": chat_id, "message_id": msg.message_id, "first_name": first_name}
             )
 
 # Main Application Entrypoint
