@@ -420,19 +420,9 @@ async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_
         secret_text = whisper["secret_text"]
         await query.answer(text=f"🤫 Secret Whisper{role_label}:\n\n{secret_text}", show_alert=True)
 
-        # If opened by receiver for the first time, mark as seen and update button markup in Telegram chat
+        # If opened by receiver for the first time, mark as seen in database
         if is_receiver and not whisper.get("is_seen"):
             mark_whisper_seen(whisper_id)
-
-            seen_name = from_user.first_name or (f"@{from_user.username}" if from_user.username else "Recipient")
-            seen_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"👁️ Seen by {seen_name} (Show Secret) 🤫", callback_data=f"ws_{whisper_id}")]
-            ])
-
-            try:
-                await query.edit_message_reply_markup(reply_markup=seen_keyboard)
-            except Exception as e:
-                logging.warning(f"Could not edit whisper reply markup to seen: {e}")
     else:
         await query.answer(
             text="❌ This secret whisper is not for you! Only the intended recipient or sender can open it.",
