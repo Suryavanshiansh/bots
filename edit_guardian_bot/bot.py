@@ -271,11 +271,19 @@ async def edit_guard_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    if not context.args or context.args[0].lower() not in ["on", "off"]:
+    if not context.args:
         await update.message.reply_text("⚠️ Usage: `/edit_guard on` or `/edit_guard off`", parse_mode="Markdown")
         return
 
-    enabled = 1 if context.args[0].lower() == "on" else 0
+    arg = context.args[0].lower()
+    if arg in ["on", "enable", "enabled", "1", "yes", "true"]:
+        enabled = 1
+    elif arg in ["off", "disable", "disabled", "0", "no", "false"]:
+        enabled = 0
+    else:
+        await update.message.reply_text("⚠️ Usage: `/edit_guard on` or `/edit_guard off`", parse_mode="Markdown")
+        return
+
     update_delete_edited(update.effective_chat.id, enabled)
     status_str = "Enabled 🟢 (Edited messages by unapproved users will be deleted)" if enabled else "Disabled 🔴"
     await update.message.reply_text(f"✅ Edit Guard protection is now **{status_str}**.", parse_mode="Markdown")
@@ -289,7 +297,7 @@ async def sticker_guard_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    if not context.args or context.args[0].lower() not in ["nsfw_only", "all", "off"]:
+    if not context.args:
         await update.message.reply_text(
             "⚠️ Usage: `/sticker_guard <nsfw_only|all|off>`\n\n"
             "• `nsfw_only`: Filters adult/NSFW stickers for unapproved users.\n"
@@ -299,7 +307,23 @@ async def sticker_guard_command(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    mode = context.args[0].lower()
+    arg = context.args[0].lower()
+    if arg in ["nsfw_only", "nsfw", "18+", "18", "on"]:
+        mode = "nsfw_only"
+    elif arg in ["all", "every", "full"]:
+        mode = "all"
+    elif arg in ["off", "disable", "disabled", "none", "0"]:
+        mode = "off"
+    else:
+        await update.message.reply_text(
+            "⚠️ Usage: `/sticker_guard <nsfw_only|all|off>`\n\n"
+            "• `nsfw_only`: Filters adult/NSFW stickers for unapproved users.\n"
+            "• `all`: Restricts all stickers for unapproved users.\n"
+            "• `off`: Disables sticker restrictions.",
+            parse_mode="Markdown"
+        )
+        return
+
     update_sticker_mode(update.effective_chat.id, mode)
     await update.message.reply_text(f"✅ Sticker Guard mode set to **{mode}**.", parse_mode="Markdown")
 
