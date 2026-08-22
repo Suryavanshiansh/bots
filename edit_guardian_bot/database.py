@@ -44,8 +44,49 @@ def init_db():
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
+
+        # Users table for caching usernames and display names
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                updated_at TEXT
+            )
+        """)
         
         conn.commit()
+
+# --- Users Caching CRUD ---
+
+def upsert_user(user_id: int, username: str, first_name: str, last_name: str):
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO users (user_id, username, first_name, last_name, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                updated_at = excluded.updated_at
+        """, (user_id, username, first_name, last_name, now))
+        conn.commit()
+
+def get_user_by_username(username: str):
+    clean = username.lstrip("@").lower()
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM users WHERE LOWER(username) = ?", (clean,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+def get_user_by_id(user_id: int):
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
 
 # --- Chat Settings CRUD ---
 

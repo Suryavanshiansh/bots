@@ -49,7 +49,10 @@ from database import (
     remove_approved_sticker_user,
     is_user_sticker_approved,
     get_approved_edit_users,
-    get_approved_sticker_users
+    get_approved_sticker_users,
+    upsert_user,
+    get_user_by_username,
+    get_user_by_id
 )
 
 # Load environment variables
@@ -105,16 +108,35 @@ async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         logger.error(f"Error checking admin status: {e}")
         return False
 
-# Helper: Parse target user from command (via reply or user_id argument)
-def get_target_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+# Helper: Parse target user from command (via reply, username, or user_id argument)
+async def get_target_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[Optional[int], str]:
     if update.message and update.message.reply_to_message:
-        return update.message.reply_to_message.from_user.id
+        u = update.message.reply_to_message.from_user
+        upsert_user(u.id, u.username, u.first_name, u.last_name)
+        display = u.first_name or (f"@{u.username}" if u.username else str(u.id))
+        return u.id, display
+
     if context.args and len(context.args) > 0:
-        try:
-            return int(context.args[0])
-        except ValueError:
-            return None
-    return None
+        arg = context.args[0].strip()
+        if arg.isdigit():
+            uid = int(arg)
+            db_u = get_user_by_id(uid)
+            if db_u:
+                display = db_u['first_name'] or (f"@{db_u['username']}" if db_u['username'] else str(uid))
+            else:
+                display = str(uid)
+            return uid, display
+        
+        # Username specified (e.g. @Toxicityiskey or Toxicityiskey)
+        clean_username = arg.lstrip('@')
+        db_u = get_user_by_username(clean_username)
+        if db_u:
+            display = db_u['first_name'] or f"@{db_u['username']}"
+            return db_u['user_id'], display
+        
+        return None, f"@{clean_username}"
+
+    return None, ""
 
 # Known explicit / adult sticker set keywords / emojis indicator check
 EXPLICIT_STICKER_KEYWORDS = [
@@ -133,6 +155,9 @@ def is_sticker_explicit(sticker) -> bool:
 # --- COMMAND HANDLERS ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user:
+        u = update.effective_user
+        upsert_user(u.id, u.username, u.first_name, u.last_name)
     user = update.effective_user
     first_name = user.first_name if user else "Friend"
     bot_user = await context.bot.get_me()
@@ -155,7 +180,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• `/edit_guard <on|off>` — Toggle edited message deletion.\n"
         f"• `/sticker_guard <nsfw_only|all|off>` — Set sticker filtering mode.\n"
         f"• `/auth_edit` — Authorize member to edit messages safely.\n"
+        f"• `/unauth_edit` — Revoke edit authorization.\n"
         f"• `/auth_sticker` — Authorize member to send stickers/media.\n"
+        f"• `/unauth_sticker` — Revoke sticker authorization.\n"
         f"• `/list_approved` — View authorized members list.\n\n"
         f"➡️ Click on **Add Group** below to add me and keep our group safe!"
     )
@@ -187,12 +214,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/edit_guard <on|off>` - Enable or disable edited message deletion.\n"
         "• `/sticker_guard <nsfw_only|all|off>` - Choose sticker restriction mode.\n\n"
         "**🔐 Member Authentication Commands:**\n"
-        "• `/auth_edit` (or `/auth_edit <user_id>`) - Authorize member to edit messages without deletion.\n"
-        "• `/unauth_edit` - Revoke edit authorization for a member.\n"
-        "• `/auth_sticker` (or `/auth_sticker <user_id>`) - Authorize member to send stickers & media.\n"
-        "• `/unauth_sticker` - Revoke sticker authorization for a member.\n"
+        "• `/auth_edit` (or `/auth_edit @username` / `/auth_edit <user_id>`) - Authorize member to edit messages without deletion.\n"
+        "• `/unauth_edit` (or `/unauth_edit @username` / `/unauth_edit <user_id>`) - Revoke edit authorization for a member.\n"
+        "• `/auth_sticker` (or `/auth_sticker @username` / `/auth_sticker <user_id>`) - Authorize member to send stickers & media.\n"
+        "• `/unauth_sticker` (or `/unauth_sticker @username` / `/unauth_sticker <user_id>`) - Revoke sticker authorization for a member.\n"
         "• `/list_approved` - View all authorized group members.\n\n"
-        "💡 *Note:* Reply to a user's message with any auth command to grant/revoke permissions instantly!"
+        "💡 *Note:* You can reply to a message or pass `@username` / `user_id` with any auth command!"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -281,13 +308,16 @@ async def auth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    target_id = get_target_user_id(update, context)
+    target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
-        await update.message.reply_text("⚠️ Please reply to a user's message or provide user ID: `/auth_edit <user_id>`", parse_mode="Markdown")
+        if display_name and display_name.startswith("@"):
+            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/auth_edit @username` or `/auth_edit <user_id>`", parse_mode="Markdown")
         return
 
     add_approved_edit_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"✅ User `{target_id}` is now **authorized to edit messages** without deletion.", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ User {display_name} is now authorized to edit messages without deletion.", parse_mode="Markdown")
 
 async def unauth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -298,13 +328,16 @@ async def unauth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    target_id = get_target_user_id(update, context)
+    target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
-        await update.message.reply_text("⚠️ Please reply to a user's message or provide user ID: `/unauth_edit <user_id>`", parse_mode="Markdown")
+        if display_name and display_name.startswith("@"):
+            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/unauth_edit @username` or `/unauth_edit <user_id>`", parse_mode="Markdown")
         return
 
     remove_approved_edit_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"🚫 Edit authorization revoked for user `{target_id}`.", parse_mode="Markdown")
+    await update.message.reply_text(f"🚫 Edit authorization revoked for User {display_name}.", parse_mode="Markdown")
 
 async def auth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -315,13 +348,16 @@ async def auth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    target_id = get_target_user_id(update, context)
+    target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
-        await update.message.reply_text("⚠️ Please reply to a user's message or provide user ID: `/auth_sticker <user_id>`", parse_mode="Markdown")
+        if display_name and display_name.startswith("@"):
+            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/auth_sticker @username` or `/auth_sticker <user_id>`", parse_mode="Markdown")
         return
 
     add_approved_sticker_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"✅ User `{target_id}` is now **authorized to send stickers & media**.", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ User {display_name} is now authorized to send stickers & media.", parse_mode="Markdown")
 
 async def unauth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -332,13 +368,16 @@ async def unauth_sticker_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("🚫 Only group administrators can use this command.")
         return
 
-    target_id = get_target_user_id(update, context)
+    target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
-        await update.message.reply_text("⚠️ Please reply to a user's message or provide user ID: `/unauth_sticker <user_id>`", parse_mode="Markdown")
+        if display_name and display_name.startswith("@"):
+            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/unauth_sticker @username` or `/unauth_sticker <user_id>`", parse_mode="Markdown")
         return
 
     remove_approved_sticker_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"🚫 Sticker authorization revoked for user `{target_id}`.", parse_mode="Markdown")
+    await update.message.reply_text(f"🚫 Sticker authorization revoked for User {display_name}.", parse_mode="Markdown")
 
 async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -349,8 +388,16 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
     edit_users = get_approved_edit_users(chat_id)
     sticker_users = get_approved_sticker_users(chat_id)
 
-    edit_list = "\n".join([f"• `{uid}`" for uid in edit_users]) if edit_users else "None"
-    sticker_list = "\n".join([f"• `{uid}`" for uid in sticker_users]) if sticker_users else "None"
+    def format_user_entry(uid: int) -> str:
+        db_u = get_user_by_id(uid)
+        if db_u:
+            name = db_u['first_name'] or "User"
+            uname = f" (@{db_u['username']})" if db_u['username'] else ""
+            return f"• {name}{uname} (`{uid}`)"
+        return f"• User `{uid}`"
+
+    edit_list = "\n".join([format_user_entry(uid) for uid in edit_users]) if edit_users else "None"
+    sticker_list = "\n".join([format_user_entry(uid) for uid in sticker_users]) if sticker_users else "None"
 
     await update.message.reply_text(
         f"📋 **Authorized Members in this Chat:**\n\n"
