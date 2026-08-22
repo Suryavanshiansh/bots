@@ -107,9 +107,10 @@ async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         return True
     try:
         member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-        return member.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
+        status_str = str(member.status).lower()
+        return status_str in ["administrator", "creator", "owner"] or member.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
     except Exception as e:
-        logger.error(f"Error checking admin status: {e}")
+        logger.error(f"Error checking admin status for user {user_id} in chat {update.effective_chat.id}: {e}")
         return False
 
 # Helper: Parse target user from command (via reply, username, or user_id argument)
