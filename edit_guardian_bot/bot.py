@@ -553,6 +553,10 @@ async def handle_edited_message_update(update: Update, context: ContextTypes.DEF
     if not update.edited_message or update.edited_message.chat.type == "private":
         return
 
+    # Do NOT delete messages edited via inline bots (e.g., Whisper Bot / via_bot) or sent by bots
+    if update.edited_message.via_bot or (update.edited_message.from_user and update.edited_message.from_user.is_bot):
+        return
+
     chat_id = update.edited_message.chat.id
     user = update.edited_message.from_user
     user_id = user.id
