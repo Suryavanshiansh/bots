@@ -4,6 +4,7 @@ import sys
 import io
 import threading
 import time
+import html
 import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
@@ -229,25 +230,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("⚠️ Usage: `/set_delay <minutes>` (e.g., `/set_delay 30` or `/set_delay 0` for instant deletion)", parse_mode="Markdown")
+        await msg.reply_text("⚠️ Usage: <code>/set_delay &lt;minutes&gt;</code> (e.g., <code>/set_delay 30</code> or <code>/set_delay 0</code> for instant deletion)", parse_mode="HTML")
         return
 
     minutes = int(context.args[0])
     update_media_delay(update.effective_chat.id, minutes)
-    await update.message.reply_text(f"✅ Auto-delete delay for media/stickers updated to **{minutes} minutes**.", parse_mode="Markdown")
+    await msg.reply_text(f"✅ Auto-delete delay for media/stickers updated to <b>{minutes} minutes</b>.", parse_mode="HTML")
 
 async def get_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     settings = get_chat_settings(update.effective_chat.id)
@@ -255,25 +260,27 @@ async def get_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edit_status = "Enabled 🟢" if settings["delete_edited"] else "Disabled 🔴"
     sticker_mode = settings["sticker_mode"]
 
-    await update.message.reply_text(
-        f"⚙️ **Current Chat Guardian Settings:**\n\n"
-        f"⏱️ **Media Delete Delay:** {delay} minutes\n"
-        f"🚫 **Edit Guard Status:** {edit_status}\n"
-        f"🏷️ **Sticker Guard Mode:** {sticker_mode}",
-        parse_mode="Markdown"
+    await msg.reply_text(
+        f"⚙️ <b>Current Chat Guardian Settings:</b>\n\n"
+        f"⏱️ <b>Media Delete Delay:</b> {delay} minutes\n"
+        f"🚫 <b>Edit Guard Status:</b> {edit_status}\n"
+        f"🏷️ <b>Sticker Guard Mode:</b> {sticker_mode}",
+        parse_mode="HTML"
     )
 
 async def edit_guard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     if not context.args:
-        await update.message.reply_text("⚠️ Usage: `/edit_guard on` or `/edit_guard off`", parse_mode="Markdown")
+        await msg.reply_text("⚠️ Usage: <code>/edit_guard on</code> or <code>/edit_guard off</code>", parse_mode="HTML")
         return
 
     arg = context.args[0].lower()
@@ -282,30 +289,33 @@ async def edit_guard_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif arg in ["off", "disable", "disabled", "0", "no", "false"]:
         enabled = 0
     else:
-        await update.message.reply_text("⚠️ Usage: `/edit_guard on` or `/edit_guard off`", parse_mode="Markdown")
+        await msg.reply_text("⚠️ Usage: <code>/edit_guard on</code> or <code>/edit_guard off</code>", parse_mode="HTML")
         return
 
     update_delete_edited(update.effective_chat.id, enabled)
     status_str = "Enabled 🟢 (Edited messages by unapproved users will be deleted)" if enabled else "Disabled 🔴"
-    await update.message.reply_text(f"✅ Edit Guard protection is now **{status_str}**.", parse_mode="Markdown")
+    await msg.reply_text(f"✅ Edit Guard protection is now <b>{status_str}</b>.", parse_mode="HTML")
 
 async def sticker_guard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
+    usage_msg = (
+        "⚠️ Usage: <code>/sticker_guard &lt;nsfw_only|all|off&gt;</code>\n\n"
+        "• <code>nsfw_only</code>: Filters adult/NSFW stickers for unapproved users.\n"
+        "• <code>all</code>: Restricts all stickers for unapproved users.\n"
+        "• <code>off</code>: Disables sticker restrictions."
+    )
+
     if not context.args:
-        await update.message.reply_text(
-            "⚠️ Usage: `/sticker_guard <nsfw_only|all|off>`\n\n"
-            "• `nsfw_only`: Filters adult/NSFW stickers for unapproved users.\n"
-            "• `all`: Restricts all stickers for unapproved users.\n"
-            "• `off`: Disables sticker restrictions.",
-            parse_mode="Markdown"
-        )
+        await msg.reply_text(usage_msg, parse_mode="HTML")
         return
 
     arg = context.args[0].lower()
@@ -316,101 +326,113 @@ async def sticker_guard_command(update: Update, context: ContextTypes.DEFAULT_TY
     elif arg in ["off", "disable", "disabled", "none", "0"]:
         mode = "off"
     else:
-        await update.message.reply_text(
-            "⚠️ Usage: `/sticker_guard <nsfw_only|all|off>`\n\n"
-            "• `nsfw_only`: Filters adult/NSFW stickers for unapproved users.\n"
-            "• `all`: Restricts all stickers for unapproved users.\n"
-            "• `off`: Disables sticker restrictions.",
-            parse_mode="Markdown"
-        )
+        await msg.reply_text(usage_msg, parse_mode="HTML")
         return
 
     update_sticker_mode(update.effective_chat.id, mode)
-    await update.message.reply_text(f"✅ Sticker Guard mode set to **{mode}**.", parse_mode="Markdown")
+    await msg.reply_text(f"✅ Sticker Guard mode set to <b>{mode}</b>.", parse_mode="HTML")
 
 async def auth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
         if display_name and display_name.startswith("@"):
-            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="Markdown")
+            clean_d = html.escape(display_name)
+            await msg.reply_text(f"⚠️ User <b>{clean_d}</b> has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="HTML")
         else:
-            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/auth_edit @username` or `/auth_edit <user_id>`", parse_mode="Markdown")
+            await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/auth_edit @username</code> or <code>/auth_edit &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
     add_approved_edit_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"✅ User {display_name} is now authorized to edit messages without deletion.", parse_mode="Markdown")
+    safe_name = html.escape(display_name)
+    await msg.reply_text(f"✅ User <b>{safe_name}</b> is now authorized to edit messages without deletion.", parse_mode="HTML")
 
 async def unauth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
         if display_name and display_name.startswith("@"):
-            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message!", parse_mode="Markdown")
+            clean_d = html.escape(display_name)
+            await msg.reply_text(f"⚠️ User <b>{clean_d}</b> has not messaged in this chat yet. Please reply directly to their message!", parse_mode="HTML")
         else:
-            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/unauth_edit @username` or `/unauth_edit <user_id>`", parse_mode="Markdown")
+            await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/unauth_edit @username</code> or <code>/unauth_edit &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
     remove_approved_edit_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"🚫 Edit authorization revoked for User {display_name}.", parse_mode="Markdown")
+    safe_name = html.escape(display_name)
+    await msg.reply_text(f"🚫 Edit authorization revoked for User <b>{safe_name}</b>.", parse_mode="HTML")
 
 async def auth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
         if display_name and display_name.startswith("@"):
-            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="Markdown")
+            clean_d = html.escape(display_name)
+            await msg.reply_text(f"⚠️ User <b>{clean_d}</b> has not messaged in this chat yet. Please reply directly to their message to authorize them!", parse_mode="HTML")
         else:
-            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/auth_sticker @username` or `/auth_sticker <user_id>`", parse_mode="Markdown")
+            await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/auth_sticker @username</code> or <code>/auth_sticker &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
     add_approved_sticker_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"✅ User {display_name} is now authorized to send stickers & media.", parse_mode="Markdown")
+    safe_name = html.escape(display_name)
+    await msg.reply_text(f"✅ User <b>{safe_name}</b> is now authorized to send stickers &amp; media.", parse_mode="HTML")
 
 async def unauth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     if not await is_group_admin(update, context, update.effective_user.id):
-        await update.message.reply_text("🚫 Only group administrators can use this command.")
+        await msg.reply_text("🚫 Only group administrators can use this command.")
         return
 
     target_id, display_name = await get_target_user_info(update, context)
     if not target_id:
         if display_name and display_name.startswith("@"):
-            await update.message.reply_text(f"⚠️ User {display_name} has not messaged in this chat yet. Please reply directly to their message!", parse_mode="Markdown")
+            clean_d = html.escape(display_name)
+            await msg.reply_text(f"⚠️ User <b>{clean_d}</b> has not messaged in this chat yet. Please reply directly to their message!", parse_mode="HTML")
         else:
-            await update.message.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: `/unauth_sticker @username` or `/unauth_sticker <user_id>`", parse_mode="Markdown")
+            await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/unauth_sticker @username</code> or <code>/unauth_sticker &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
     remove_approved_sticker_user(update.effective_chat.id, target_id)
-    await update.message.reply_text(f"🚫 Sticker authorization revoked for User {display_name}.", parse_mode="Markdown")
+    safe_name = html.escape(display_name)
+    await msg.reply_text(f"🚫 Sticker authorization revoked for User <b>{safe_name}</b>.", parse_mode="HTML")
 
 async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        await update.message.reply_text("⚠️ This command can only be used in group chats.")
+    msg = update.effective_message
+    if not msg or update.effective_chat.type == "private":
+        if msg:
+            await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
     chat_id = update.effective_chat.id
@@ -420,19 +442,19 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
     def format_user_entry(uid: int) -> str:
         db_u = get_user_by_id(uid)
         if db_u:
-            name = db_u['first_name'] or "User"
-            uname = f" (@{db_u['username']})" if db_u['username'] else ""
-            return f"• {name}{uname} (`{uid}`)"
-        return f"• User `{uid}`"
+            name = html.escape(db_u['first_name'] or "User")
+            uname = f" (@{html.escape(db_u['username'])})" if db_u['username'] else ""
+            return f"• {name}{uname} (<code>{uid}</code>)"
+        return f"• User <code>{uid}</code>"
 
     edit_list = "\n".join([format_user_entry(uid) for uid in edit_users]) if edit_users else "None"
     sticker_list = "\n".join([format_user_entry(uid) for uid in sticker_users]) if sticker_users else "None"
 
-    await update.message.reply_text(
-        f"📋 **Authorized Members in this Chat:**\n\n"
-        f"✏️ **Approved Edit Users:**\n{edit_list}\n\n"
-        f"🖼️ **Approved Sticker/Media Users:**\n{sticker_list}",
-        parse_mode="Markdown"
+    await msg.reply_text(
+        f"📋 <b>Authorized Members in this Chat:</b>\n\n"
+        f"✏️ <b>Approved Edit Users:</b>\n{edit_list}\n\n"
+        f"🖼️ <b>Approved Sticker/Media Users:</b>\n{sticker_list}",
+        parse_mode="HTML"
     )
 
 # --- BOT OWNER EXCLUSIVE COMMANDS ---
@@ -659,6 +681,9 @@ async def handle_media_and_stickers(update: Update, context: ContextTypes.DEFAUL
                 data={"chat_id": chat_id, "message_id": msg.message_id, "first_name": first_name}
             )
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+
 # Main Application Entrypoint
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
@@ -670,6 +695,7 @@ def main():
 
     # Build python-telegram-bot application with JobQueue
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_error_handler(global_error_handler)
 
     # Register Command Handlers (with aliases)
     app.add_handler(CommandHandler("start", start_command))
