@@ -13,7 +13,7 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from database import init_db
 from handlers.group_handlers import (
-    cmd_game, cmd_extend, cmd_start, cmd_stop, cmd_status
+    cmd_game, cmd_extend, cmd_start, cmd_stop, cmd_status, cmd_time
 )
 from handlers.dm_handlers import (
     cmd_profile, cmd_roles_info, cmd_shop, cmd_inventory,
@@ -65,6 +65,7 @@ def main():
     app.add_handler(CommandHandler(["start", "start_bot"], cmd_start))
     app.add_handler(CommandHandler(["stop", "stop_bot"], cmd_stop))
     app.add_handler(CommandHandler(["status", "status_bot"], cmd_status))
+    app.add_handler(CommandHandler(["time", "timer"], cmd_time))
     app.add_handler(CommandHandler("profile", cmd_profile))
     app.add_handler(CommandHandler(["roles", "help"], cmd_roles_info))
     app.add_handler(CommandHandler("shop", cmd_shop))
