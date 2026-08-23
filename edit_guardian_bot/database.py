@@ -3,14 +3,27 @@ import sqlite3
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "guardian.db")
+
+# Use persistent storage path on Render if available, otherwise use local directory
+# On Render free tier, /opt/render/project/src/ persists between sleep/wake cycles
+# For full persistence across redeploys, set DATABASE_PATH env var to a persistent disk path
+_db_env = os.getenv("DATABASE_PATH")
+if _db_env:
+    DB_PATH = _db_env
+elif os.path.isdir("/opt/render/project/src"):
+    DB_PATH = "/opt/render/project/src/guardian.db"
+else:
+    DB_PATH = os.path.join(BASE_DIR, "guardian.db")
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
+
 def init_db():
+    print(f"[DB] Using database at: {DB_PATH}")
     with get_connection() as conn:
         cursor = conn.cursor()
         
