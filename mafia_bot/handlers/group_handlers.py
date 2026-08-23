@@ -1,5 +1,7 @@
 import asyncio
 import time
+import logging
+import traceback
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import (
@@ -10,6 +12,8 @@ from config import REGISTRATION_TIME, EXTEND_TIME, NIGHT_TIME, DAY_VOTE_TIME
 from game.setup import get_balanced_roles
 from game.roles import ROLES_INFO
 from game.engine import check_win_condition, process_night_actions, process_day_votes
+
+logger = logging.getLogger(__name__)
 
 async def check_and_clean_stale_game(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
     """If a lobby timer has expired, auto-trigger start sequence or cleanup."""
@@ -229,7 +233,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role_counts = {}
     for idx, p in enumerate(alive_players, start=1):
         alive_lines.append(f"{idx}. {p['full_name']}")
-        role_name = ROLES_INFO[p["role"]]["name"] if p["role"] in ROLES_INFO else "Villager"
+        role_name = ROLES_INFO.get(p["role"], {}).get("name", "Villager")
         role_counts[role_name] = role_counts.get(role_name, 0) + 1
 
     summary_roles = []
@@ -273,21 +277,25 @@ async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat
 
     for p, role in zip(players, balanced_roles):
         await set_player_role(chat_id, p["user_id"], role)
-        role_info = ROLES_INFO[role]
+        role_info = ROLES_INFO.get(role, {})
+        role_name = role_info.get("name", role)
+        role_team = role_info.get("team", {}).value if hasattr(role_info.get("team"), "value") else "Town"
+        role_desc = role_info.get("description", "")
+
         dm_text = (
-            f"🎭 **YOUR SECRET ROLE**: {role_info['name']}\n"
-            f"**Team**: {role_info['team'].value}\n\n"
-            f"ℹ️ {role_info['description']}"
+            f"🎭 **YOUR SECRET ROLE**: {role_name}\n"
+            f"**Team**: {role_team}\n\n"
+            f"ℹ️ {role_desc}"
         )
         try:
             await context.bot.send_message(chat_id=p["user_id"], text=dm_text)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not send role DM to user {p['user_id']}: {e}")
 
     await start_night_phase(context, chat_id, round_num=1)
 
 async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
-    """Transitions game to Night Phase, sends tailored atmospheric night status messages, and DM action panels with Skip options."""
+    """Transitions game to Night Phase, sends tailored atmospheric night status messages, and DM action panels."""
     await set_game_state(chat_id, "NIGHT", phase_round=round_num, duration_sec=NIGHT_TIME)
     players = await get_players(chat_id, alive_only=True)
     roles_present = set(p["role"] for p in players)
@@ -328,9 +336,9 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
     for p in players:
         role = p["role"]
         user_id = p["user_id"]
-        role_info = ROLES_INFO.get(role)
+        role_info = ROLES_INFO.get(role, {})
 
-        if not role_info or not role_info["has_night_action"]:
+        if not role_info or not role_info.get("has_night_action"):
             continue
 
         targets_buttons = []
@@ -344,7 +352,6 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
             cb_data = f"nact_{chat_id}_{round_num}_{role}_{target['user_id']}"
             targets_buttons.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
 
-        # Add Skip/Pass options for ALL night action roles including Don & Mafia
         targets_buttons.append([InlineKeyboardButton("⏭️ Skip Action Tonight", callback_data=f"nact_{chat_id}_{round_num}_{role}_0")])
 
         if targets_buttons:
@@ -352,11 +359,11 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=f"🌙 **NIGHT {round_num} ACTION**\n{role_info['action_prompt']}",
+                    text=f"🌙 **NIGHT {round_num} ACTION**\n{role_info.get('action_prompt', 'Select target:')}",
                     reply_markup=keyboard
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Could not send action DM to {user_id}: {e}")
 
     if context.job_queue:
         context.job_queue.run_once(
@@ -373,104 +380,116 @@ async def end_night_phase_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def trigger_end_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Processes night actions, announces casualties with role summary, and moves to Day Voting."""
-    game = await get_game(chat_id)
-    if not game or game["state"] != "NIGHT":
-        return
+    try:
+        game = await get_game(chat_id)
+        if not game or game["state"] != "NIGHT":
+            return
 
-    round_num = game["phase_round"]
-    result = await process_night_actions(chat_id, round_num)
+        round_num = game["phase_round"]
+        result = await process_night_actions(chat_id, round_num)
 
-    deaths = result["deaths"]
-    death_text = ""
-    if deaths:
-        names = [f"💀 **{d['full_name']}** ({ROLES_INFO[d['role']]['name']})" for d in deaths]
-        death_text = "The morning comes with terrible news... The following were eliminated during the night:\n" + "\n".join(names)
-        for d in deaths:
-            try:
-                await context.bot.send_message(
-                    chat_id=d["user_id"],
-                    text="☠️ **YOU WERE KILLED!** Send your last message in this DM to broadcast it to the group."
-                )
-            except Exception:
-                pass
-    else:
-        death_text = "☀️ Morning breaks! Miraculously, nobody died during the night!"
+        deaths = result["deaths"]
+        death_text = ""
+        if deaths:
+            names = []
+            for d in deaths:
+                r_info = ROLES_INFO.get(d["role"], {})
+                r_title = r_info.get("name", d["role"])
+                names.append(f"💀 **{d['full_name']}** ({r_title})")
+            death_text = "The morning comes with terrible news... The following were eliminated during the night:\n" + "\n".join(names)
+            for d in deaths:
+                try:
+                    await context.bot.send_message(
+                        chat_id=d["user_id"],
+                        text="☠️ **YOU WERE KILLED!** Send your last message in this DM to broadcast it to the group."
+                    )
+                except Exception:
+                    pass
+        else:
+            death_text = "☀️ Morning breaks! Miraculously, nobody died during the night!"
 
-    players = await get_players(chat_id, alive_only=True)
-    alive_lines = [f"{idx}. {p['full_name']}" for idx, p in enumerate(players, start=1)]
+        players = await get_players(chat_id, alive_only=True)
+        alive_lines = [f"{idx}. {p['full_name']}" for idx, p in enumerate(players, start=1)]
 
-    role_counts = {}
-    for p in players:
-        r_name = ROLES_INFO[p["role"]]["name"] if p["role"] in ROLES_INFO else "Villager"
-        role_counts[r_name] = role_counts.get(r_name, 0) + 1
+        role_counts = {}
+        for p in players:
+            r_name = ROLES_INFO.get(p["role"], {}).get("name", "Villager")
+            role_counts[r_name] = role_counts.get(r_name, 0) + 1
 
-    summary_roles = [f"{r_name} - {count}" if count > 1 else f"{r_name}" for r_name, count in role_counts.items()]
+        summary_roles = [f"{r_name} - {count}" if count > 1 else f"{r_name}" for r_name, count in role_counts.items()]
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"☀️ **DAY {round_num} BREAKS** ☀️\n\n"
-            f"{death_text}\n\n"
-            f"📋 **Players alive** ({len(players)}):\n" +
-            ("\n".join(alive_lines) if alive_lines else "None") + "\n\n"
-            f"🎭 **Some of them are**:\n" +
-            (", ".join(summary_roles) if summary_roles else "Unknown") + "\n"
-            f"**Total**: {len(players)} people.\n\n"
-            f"Now it's time to discuss tonight's events to figure out who the Mafia is!"
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"☀️ **DAY {round_num} BREAKS** ☀️\n\n"
+                f"{death_text}\n\n"
+                f"📋 **Players alive** ({len(players)}):\n" +
+                ("\n".join(alive_lines) if alive_lines else "None") + "\n\n"
+                f"🎭 **Some of them are**:\n" +
+                (", ".join(summary_roles) if summary_roles else "Unknown") + "\n"
+                f"**Total**: {len(players)} people.\n\n"
+                f"Now it's time to discuss tonight's events to figure out who the Mafia is!"
+            )
         )
-    )
 
-    win_res = await check_win_condition(chat_id)
-    if win_res:
-        await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
-        await set_game_state(chat_id, "ENDED")
-        return
+        win_res = await check_win_condition(chat_id)
+        if win_res:
+            await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
+            await set_game_state(chat_id, "ENDED")
+            return
 
-    await start_day_voting_phase(context, chat_id, round_num)
+        await start_day_voting_phase(context, chat_id, round_num)
+    except Exception as e:
+        logger.error(f"Error in trigger_end_night_phase: {e}\n{traceback.format_exc()}")
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Game Engine Error: {e}. Moving to Day voting...")
+        await start_day_voting_phase(context, chat_id, round_num if 'round_num' in locals() else 1)
 
 async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
     """Starts Day voting phase by sending DM inline keyboards to alive players."""
-    await set_game_state(chat_id, "DAY_VOTE", phase_round=round_num, duration_sec=DAY_VOTE_TIME)
-    players = await get_players(chat_id, alive_only=True)
+    try:
+        await set_game_state(chat_id, "DAY_VOTE", phase_round=round_num, duration_sec=DAY_VOTE_TIME)
+        players = await get_players(chat_id, alive_only=True)
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"🗳️ **DAY {round_num} LYNCH VOTING IS NOW OPEN!** 🗳️\n\n"
-            f"All alive players: Check your DMs from the bot to cast your secret vote!\n"
-            f"⏱️ **Voting Time**: {DAY_VOTE_TIME} seconds"
-        )
-    )
-
-    for p in players:
-        voter_id = p["user_id"]
-        vote_buttons = []
-        for candidate in players:
-            if candidate["user_id"] == voter_id:
-                continue
-            btn_text = f"⚖️ Vote to lynch {candidate['full_name']}"
-            cb_data = f"dvote_{chat_id}_{round_num}_{candidate['user_id']}"
-            vote_buttons.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
-
-        vote_buttons.append([InlineKeyboardButton("🚫 Abstain / Skip Vote", callback_data=f"dvote_{chat_id}_{round_num}_0")])
-        keyboard = InlineKeyboardMarkup(vote_buttons)
-
-        try:
-            await context.bot.send_message(
-                chat_id=voter_id,
-                text=f"🗳️ **DAY {round_num} SECRET LYNCH VOTE**\nSelect who you want to lynch:",
-                reply_markup=keyboard
-            )
-        except Exception:
-            pass
-
-    if context.job_queue:
-        context.job_queue.run_once(
-            callback=end_day_voting_phase_job,
-            when=DAY_VOTE_TIME,
+        await context.bot.send_message(
             chat_id=chat_id,
-            name=f"day_vote_{chat_id}"
+            text=(
+                f"🗳️ **DAY {round_num} LYNCH VOTING IS NOW OPEN!** 🗳️\n\n"
+                f"All alive players: Check your DMs from the bot to cast your secret vote!\n"
+                f"⏱️ **Voting Time**: {DAY_VOTE_TIME} seconds"
+            )
         )
+
+        for p in players:
+            voter_id = p["user_id"]
+            vote_buttons = []
+            for candidate in players:
+                if candidate["user_id"] == voter_id:
+                    continue
+                btn_text = f"⚖️ Vote to lynch {candidate['full_name']}"
+                cb_data = f"dvote_{chat_id}_{round_num}_{candidate['user_id']}"
+                vote_buttons.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
+
+            vote_buttons.append([InlineKeyboardButton("🚫 Abstain / Skip Vote", callback_data=f"dvote_{chat_id}_{round_num}_0")])
+            keyboard = InlineKeyboardMarkup(vote_buttons)
+
+            try:
+                await context.bot.send_message(
+                    chat_id=voter_id,
+                    text=f"🗳️ **DAY {round_num} SECRET LYNCH VOTE**\nSelect who you want to lynch:",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.warning(f"Could not send vote DM to {voter_id}: {e}")
+
+        if context.job_queue:
+            context.job_queue.run_once(
+                callback=end_day_voting_phase_job,
+                when=DAY_VOTE_TIME,
+                chat_id=chat_id,
+                name=f"day_vote_{chat_id}"
+            )
+    except Exception as e:
+        logger.error(f"Error in start_day_voting_phase: {e}\n{traceback.format_exc()}")
 
 async def end_day_voting_phase_job(context: ContextTypes.DEFAULT_TYPE):
     """JobQueue wrapper for ending day vote phase when timer expires."""
@@ -479,52 +498,55 @@ async def end_day_voting_phase_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def trigger_end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Tallies Day votes and handles lynching."""
-    game = await get_game(chat_id)
-    if not game or game["state"] != "DAY_VOTE":
-        return
+    try:
+        game = await get_game(chat_id)
+        if not game or game["state"] != "DAY_VOTE":
+            return
 
-    round_num = game["phase_round"]
-    lynch_res = await process_day_votes(chat_id, round_num)
+        round_num = game["phase_round"]
+        lynch_res = await process_day_votes(chat_id, round_num)
 
-    lynched = lynch_res["lynched"]
-    if lynched:
-        role_name = ROLES_INFO[lynched["role"]]["name"]
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"⚖️ **DAY {round_num} LYNCHING RESULTS** ⚖️\n\n"
-                f"The town has voted! 💀 **{lynched['full_name']}** was lynched!\n"
-                f"Their true role was: **{role_name}**"
-            )
-        )
-
-        try:
-            await context.bot.send_message(
-                chat_id=lynched["user_id"],
-                text="☠️ **YOU WERE LYNCHED!** Send your last words here in DM to broadcast them to the group."
-            )
-        except Exception:
-            pass
-
-        if lynch_res.get("is_jester"):
+        lynched = lynch_res["lynched"]
+        if lynched:
+            role_name = ROLES_INFO.get(lynched["role"], {}).get("name", lynched["role"])
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="🃏 **JESTER WINS!** The Jester tricked the town into lynching them!"
+                text=(
+                    f"⚖️ **DAY {round_num} LYNCHING RESULTS** ⚖️\n\n"
+                    f"The town has voted! 💀 **{lynched['full_name']}** was lynched!\n"
+                    f"Their true role was: **{role_name}**"
+                )
             )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=lynched["user_id"],
+                    text="☠️ **YOU WERE LYNCHED!** Send your last words here in DM to broadcast them to the group."
+                )
+            except Exception:
+                pass
+
+            if lynch_res.get("is_jester"):
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="🃏 **JESTER WINS!** The Jester tricked the town into lynching them!"
+                )
+                await set_game_state(chat_id, "ENDED")
+                return
+
+        else:
+            reason = lynch_res["reason"]
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚖️ **DAY {round_num} LYNCHING RESULTS** ⚖️\n\n{reason}"
+            )
+
+        win_res = await check_win_condition(chat_id)
+        if win_res:
+            await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
             await set_game_state(chat_id, "ENDED")
             return
 
-    else:
-        reason = lynch_res["reason"]
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"⚖️ **DAY {round_num} LYNCHING RESULTS** ⚖️\n\n{reason}"
-        )
-
-    win_res = await check_win_condition(chat_id)
-    if win_res:
-        await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
-        await set_game_state(chat_id, "ENDED")
-        return
-
-    await start_night_phase(context, chat_id, round_num + 1)
+        await start_night_phase(context, chat_id, round_num + 1)
+    except Exception as e:
+        logger.error(f"Error in trigger_end_day_voting_phase: {e}\n{traceback.format_exc()}")
