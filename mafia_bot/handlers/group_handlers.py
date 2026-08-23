@@ -42,7 +42,6 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please use `/game` in a Telegram Group chat to start a Mafia game!")
         return
 
-    # Check if existing lobby is stale
     stale_handled = await check_and_clean_stale_game(context, chat.id)
     if stale_handled:
         game = None
@@ -75,7 +74,7 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏱️ **Registration Time**: {REGISTRATION_TIME} seconds\n"
         f"👥 **Min Players**: 3 Players\n\n"
         f"👉 Click the button below to **start DM with bot & join**!\n"
-        f"Use `/start` to start early, `/extend` to add time, `/time` for countdown, or `/stop` to cancel."
+        f"Use `/start` to start immediately, `/extend` to add time, `/time` for countdown, or `/stop` to cancel."
     )
     await update.message.reply_markdown(msg, reply_markup=reply_markup)
 
@@ -251,36 +250,19 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_markdown(msg)
 
 async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Initiates game role assignment and transitions state."""
-    game = await get_game(chat_id)
+    """Instantly assigns balanced roles and starts Night Phase 1 without getting stuck!"""
     players = await get_players(chat_id)
-    owner_id = game["owner_id"]
+    if len(players) < 3:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Cannot start game! Minimum 3 players required (currently joined: {len(players)})."
+        )
+        return
 
-    owner_is_playing = any(p["user_id"] == owner_id for p in players)
-
-    if owner_is_playing:
-        await set_game_state(chat_id, "ROLE_ASSIGNMENT", duration_sec=60)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎲 Assign Random Roles", callback_data=f"roleopt_rand_{chat_id}")],
-            [InlineKeyboardButton("🎭 Custom Assign Roles", callback_data=f"roleopt_cust_{chat_id}")]
-        ])
-        try:
-            await context.bot.send_message(
-                chat_id=owner_id,
-                text=(
-                    f"👑 **Game Host Choice** (Group: {chat_id})\n"
-                    f"You joined the game with {len(players)} players!\n"
-                    f"How would you like to assign roles?"
-                ),
-                reply_markup=keyboard
-            )
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="🎭 **Game is starting!** Waiting for Host to select role assignment method in DM..."
-            )
-            return
-        except Exception:
-            pass
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"🎭 **GAME IS STARTING!** Assigning secret roles to {len(players)} players via DM..."
+    )
 
     await assign_random_roles_and_start(context, chat_id)
 
