@@ -193,7 +193,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛑 **The Mafia game has been canceled.**")
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command /status to display current game state, alive players, and time left."""
+    """Command /status to display current game state, alive player list, and role summary."""
     chat = update.effective_chat
     game = await get_game(chat.id)
     if not game:
@@ -201,25 +201,29 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     players = await get_players(chat.id)
-    alive_list = []
-    dead_list = []
+    alive_players = [p for p in players if p["is_alive"]]
 
-    for p in players:
-        name = p["full_name"]
-        if p["is_alive"]:
-            alive_list.append(f"🟢 {name}")
-        else:
-            dead_list.append(f"💀 ~{name}~ ({p['role']})")
+    alive_lines = []
+    role_counts = {}
+    for idx, p in enumerate(alive_players, start=1):
+        alive_lines.append(f"{idx}. {p['full_name']}")
+        role_name = ROLES_INFO[p["role"]]["name"] if p["role"] in ROLES_INFO else "Villager"
+        role_counts[role_name] = role_counts.get(role_name, 0) + 1
+
+    summary_roles = []
+    for r_name, count in role_counts.items():
+        summary_roles.append(f"{r_name} - {count}" if count > 1 else f"{r_name}")
 
     now = int(time.time())
     rem = max(0, game["expires_at"] - now)
 
     msg = (
-        f"📊 **GAME STATUS**\n"
-        f"**Phase**: `{game['state']}` (Round {game['phase_round']})\n"
-        f"⏱️ **Time Left**: **{rem} seconds**\n\n"
-        f"**Alive Players ({len(alive_list)})**:\n" + ("\n".join(alive_list) if alive_list else "None") + "\n\n"
-        f"**Eliminated Players ({len(dead_list)})**:\n" + ("\n".join(dead_list) if dead_list else "None")
+        f"📋 **PLAYERS ALIVE** ({len(alive_players)}):\n" +
+        ("\n".join(alive_lines) if alive_lines else "None") + "\n\n"
+        f"🎭 **Some of them are**:\n" +
+        (", ".join(summary_roles) if summary_roles else "Unknown") + "\n"
+        f"**Total**: {len(alive_players)} people.\n\n"
+        f"⏱️ **Phase**: `{game['state']}` ({rem}s left)"
     )
     await update.message.reply_markdown(msg)
 
@@ -278,19 +282,38 @@ async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat
     await start_night_phase(context, chat_id, round_num=1)
 
 async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
-    """Transitions game to Night Phase and sends DM action panels."""
+    """Transitions game to Night Phase, sends atmospheric night messages, and action DM panels."""
     await set_game_state(chat_id, "NIGHT", phase_round=round_num, duration_sec=NIGHT_TIME)
     players = await get_players(chat_id, alive_only=True)
+    roles_present = set(p["role"] for p in players)
 
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌙 **NIGHT {round_num} HAS FALLEN...** 🌙\n\n"
-            f"Everyone close your eyes! Special roles, check your DMs from the bot to perform your secret night actions.\n"
+            f"The city sleeps as darkness settles over the streets...\n"
             f"⏱️ **Night Duration**: {NIGHT_TIME} seconds"
         )
     )
 
+    # Atmospheric role activity announcements
+    if any(r in ("GODFATHER", "MAFIA") for r in roles_present):
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="🔴 **Mafia is choosing a target...**")
+
+    if "DOCTOR" in roles_present:
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="💉 **Doctor went on night duty...**")
+
+    if "DETECTIVE" in roles_present:
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="🕵️ **Detective is looking for the criminals...**")
+
+    if "SERIAL_KILLER" in roles_present:
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="🔪 **Serial Killer is lurking in the shadows...**")
+
+    # Send action DM panels to players with night actions
     for p in players:
         role = p["role"]
         user_id = p["user_id"]
@@ -332,7 +355,7 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
     )
 
 async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
-    """Processes night actions, announces casualties, and moves to Day Voting."""
+    """Processes night actions, announces casualties with role summary, and moves to Day Voting."""
     chat_id = context.job.chat_id
     game = await get_game(chat_id)
     if not game or game["state"] != "NIGHT":
@@ -357,9 +380,28 @@ async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
     else:
         death_text = "☀️ Morning breaks! Miraculously, nobody died during the night!"
 
+    players = await get_players(chat_id, alive_only=True)
+    alive_lines = [f"{idx}. {p['full_name']}" for idx, p in enumerate(players, start=1)]
+
+    role_counts = {}
+    for p in players:
+        r_name = ROLES_INFO[p["role"]]["name"] if p["role"] in ROLES_INFO else "Villager"
+        role_counts[r_name] = role_counts.get(r_name, 0) + 1
+
+    summary_roles = [f"{r_name} - {count}" if count > 1 else f"{r_name}" for r_name, count in role_counts.items()]
+
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"☀️ **DAY {round_num} BREAKS** ☀️\n\n{death_text}"
+        text=(
+            f"☀️ **DAY {round_num} BREAKS** ☀️\n\n"
+            f"{death_text}\n\n"
+            f"📋 **Players alive** ({len(players)}):\n" +
+            ("\n".join(alive_lines) if alive_lines else "None") + "\n\n"
+            f"🎭 **Some of them are**:\n" +
+            (", ".join(summary_roles) if summary_roles else "Unknown") + "\n"
+            f"**Total**: {len(players)} people.\n\n"
+            f"Now it's time to discuss tonight's events to figure out who the Mafia is!"
+        )
     )
 
     win_res = await check_win_condition(chat_id)

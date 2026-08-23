@@ -338,6 +338,7 @@ async def callback_day_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ Your secret vote for **{target_name}** has been recorded!{mayor_note}")
 
 async def handle_dm_last_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles text messages in DM from dead players to broadcast as Last Words."""
     user = update.effective_user
     text = update.message.text
 
@@ -358,7 +359,8 @@ async def handle_dm_last_word(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     for rec in dead_records:
         chat_id = rec["chat_id"]
-        msg_text = f"☠️ **LAST WORDS FROM THE GRAVE** ({rec['full_name']}):\n💬 _\"{text}\"_"
+        # Format matching TrueMafia style screenshot:
+        msg_text = f"🗣️ **Some citizen heard as {rec['full_name']} yelled before dying**:\n_\"{text}\"_"
         try:
             await context.bot.send_message(chat_id=chat_id, text=msg_text)
             await disable_last_word(chat_id, user.id)
