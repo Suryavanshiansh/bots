@@ -391,6 +391,10 @@ async def auth_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/auth_edit @username</code> or <code>/auth_edit &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
+    if target_id == update.effective_user.id:
+        await msg.reply_text("⚠️ You cannot authorize yourself! Another group administrator or the Bot Owner must authorize you.", parse_mode="HTML")
+        return
+
     add_approved_edit_user(update.effective_chat.id, target_id)
     safe_name = html.escape(display_name)
     await msg.reply_text(f"✅ User <b>{safe_name}</b> is now authorized to edit messages without deletion.", parse_mode="HTML")
@@ -439,9 +443,14 @@ async def auth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await msg.reply_text("⚠️ Usage: Reply to a user or pass username/user_id: <code>/auth_sticker @username</code> or <code>/auth_sticker &lt;user_id&gt;</code>", parse_mode="HTML")
         return
 
+    if target_id == update.effective_user.id:
+        await msg.reply_text("⚠️ You cannot authorize yourself! Another group administrator or the Bot Owner must authorize you.", parse_mode="HTML")
+        return
+
     add_approved_sticker_user(update.effective_chat.id, target_id)
     safe_name = html.escape(display_name)
     await msg.reply_text(f"✅ User <b>{safe_name}</b> is now authorized to send stickers &amp; media.", parse_mode="HTML")
+
 
 async def unauth_sticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
