@@ -282,7 +282,7 @@ async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat
     await start_night_phase(context, chat_id, round_num=1)
 
 async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
-    """Transitions game to Night Phase, sends atmospheric night messages, and action DM panels."""
+    """Transitions game to Night Phase, sends tailored atmospheric night status messages according to active roles."""
     await set_game_state(chat_id, "NIGHT", phase_round=round_num, duration_sec=NIGHT_TIME)
     players = await get_players(chat_id, alive_only=True)
     roles_present = set(p["role"] for p in players)
@@ -296,8 +296,12 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
         )
     )
 
-    # Atmospheric role activity announcements
-    if any(r in ("GODFATHER", "MAFIA") for r in roles_present):
+    # Detailed atmospheric messages tailored to present roles
+    if "GODFATHER" in roles_present:
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="🎩 **Don is giving secret orders to the Mafia...**")
+
+    if "MAFIA" in roles_present and "GODFATHER" not in roles_present:
         await asyncio.sleep(1)
         await context.bot.send_message(chat_id=chat_id, text="🔴 **Mafia is choosing a target...**")
 
@@ -308,6 +312,10 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
     if "DETECTIVE" in roles_present:
         await asyncio.sleep(1)
         await context.bot.send_message(chat_id=chat_id, text="🕵️ **Detective is looking for the criminals...**")
+
+    if "VIGILANTE" in roles_present:
+        await asyncio.sleep(1)
+        await context.bot.send_message(chat_id=chat_id, text="🔫 **Vigilante is loading their gun in the dark...**")
 
     if "SERIAL_KILLER" in roles_present:
         await asyncio.sleep(1)
