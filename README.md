@@ -25,6 +25,11 @@ A central repository containing multiple specialized Telegram bots:
 - **Description**: Allows sending secret "whisper" messages in any Telegram group or chat (`@bot [secret] @user` or `[user_id]`). Hidden behind a button and can ONLY be opened by the target recipient, sender, or Owner (`OWNER_ID`).
 - **Run Locally**: `cd whisper_bot && python bot.py`
 
+### 4. 🎵 `music_bot/` (Telegram Voice Chat Music & Video Bot)
+- **Tech Stack**: Python (`pyrogram`, `pytgcalls`, `yt-dlp`, `aiosqlite`)
+- **Description**: Feature-packed Telegram voice chat music & video bot supporting audio (`/play`) and video (`/vplay`), track queues, controls (`/pause`, `/resume`, `/skip`, `/end`, `/loop`, `/seek`, `/seekback`), and group authorization (`/auth`, `/unauth`, `/reboot`).
+- **Run Locally**: `cd music_bot && python bot.py`
+
 ---
 
 ## 🔐 Environment Variables
@@ -43,7 +48,14 @@ Ensure `.env` files are kept private and never committed to GitHub.
 - **`whisper_bot/.env`**:
   ```env
   TELEGRAM_BOT_TOKEN=your_bot_token_here
-  
+  ```
+- **`music_bot/.env`**:
+  ```env
+  API_ID=12345678
+  API_HASH=your_api_hash_here
+  BOT_TOKEN=your_bot_token_here
+  STRING_SESSION=your_pyrogram_string_session_here
+  OWNER_ID=your_telegram_id_here
   ```
 
 ---
@@ -55,6 +67,8 @@ When deploying a specific bot from a multi-bot GitHub repository on Render:
    - For Wordle Bot: `word_guess`
    - For Word Search Bot: `word-solver-bot`
    - For Whisper Bot: `whisper_bot`
+   - For Music Bot: `music_bot`
 2. Set Build & Start commands for that bot:
    - Build: `pip install -r requirements.txt` (or `npm install`)
    - Start: `python bot.py` (or `node index.js`)
+

@@ -15,7 +15,7 @@ async def init_db():
             )
         """)
 
-        # Table for players in games
+        # Table for players in active games
         await db.execute("""
             CREATE TABLE IF NOT EXISTS players (
                 chat_id INTEGER,
@@ -25,7 +25,7 @@ async def init_db():
                 role TEXT,
                 is_alive BOOLEAN DEFAULT 1,
                 can_last_word BOOLEAN DEFAULT 0,
-                bullets INTEGER DEFAULT 2,   -- For Vigilante
+                bullets INTEGER DEFAULT 2,
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
@@ -39,7 +39,7 @@ async def init_db():
                 actor_id INTEGER,
                 role TEXT,
                 target_id INTEGER,
-                action_type TEXT,        -- KILL, SAVE, INVESTIGATE, SHOOT
+                action_type TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -51,8 +51,22 @@ async def init_db():
                 round INTEGER,
                 voter_id INTEGER,
                 target_id INTEGER,
-                weight INTEGER DEFAULT 1, -- Mayor gets 2
+                weight INTEGER DEFAULT 1,
                 PRIMARY KEY (chat_id, round, voter_id)
+            )
+        """)
+
+        # Table for user global stats & profiles
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                full_name TEXT,
+                games_played INTEGER DEFAULT 0,
+                games_won INTEGER DEFAULT 0,
+                mafia_wins INTEGER DEFAULT 0,
+                town_wins INTEGER DEFAULT 0,
+                neutral_wins INTEGER DEFAULT 0
             )
         """)
 
@@ -89,6 +103,16 @@ async def add_player(chat_id: int, user_id: int, username: str, full_name: str):
             INSERT OR REPLACE INTO players (chat_id, user_id, username, full_name, role, is_alive, can_last_word, bullets)
             VALUES (?, ?, ?, ?, 'UNASSIGNED', 1, 0, 2)
         """, (chat_id, user_id, username or "", full_name or "Player"))
+
+        # Ensure user profile exists
+        await db.execute("""
+            INSERT INTO user_profiles (user_id, username, full_name, games_played)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                full_name = excluded.full_name,
+                games_played = games_played + 1
+        """, (user_id, username or "", full_name or "Player"))
         await db.commit()
 
 async def get_players(chat_id: int, alive_only: bool = False):
@@ -142,6 +166,28 @@ async def get_day_votes(chat_id: int, phase_round: int):
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM day_votes WHERE chat_id = ? AND round = ?", (chat_id, phase_round)) as cursor:
             return await cursor.fetchall()
+
+async def get_user_profile(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)) as cursor:
+            return await cursor.fetchone()
+
+async def record_win(user_id: int, win_type: str):
+    """Update win counters for user profile."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        column = "town_wins"
+        if win_type == "MAFIA":
+            column = "mafia_wins"
+        elif win_type in ("JESTER", "SERIAL_KILLER", "NEUTRAL"):
+            column = "neutral_wins"
+
+        await db.execute(f"""
+            UPDATE user_profiles
+            SET games_won = games_won + 1, {column} = {column} + 1
+            WHERE user_id = ?
+        """, (user_id,))
+        await db.commit()
 
 async def delete_game(chat_id: int):
     async with aiosqlite.connect(DB_PATH) as db:

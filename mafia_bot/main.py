@@ -16,6 +16,7 @@ from handlers.group_handlers import (
     cmd_game, cmd_extend, cmd_start, cmd_stop, cmd_status
 )
 from handlers.dm_handlers import (
+    cmd_profile, cmd_roles_info, callback_menu_rules,
     callback_owner_role_option, callback_custom_role_select,
     callback_night_action, callback_day_vote, handle_dm_last_word
 )
@@ -63,9 +64,15 @@ def main():
     app.add_handler(CommandHandler(["start", "start_bot"], cmd_start))
     app.add_handler(CommandHandler(["stop", "stop_bot"], cmd_stop))
     app.add_handler(CommandHandler(["status", "status_bot"], cmd_status))
+    app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler(["roles", "help"], cmd_roles_info))
     app.add_handler(CommandHandler("gamelog", cmd_gamelog))
 
-    # Callback Query Handlers (Buttons)
+    # Callback Query Handlers (Menu & Game Buttons)
+    app.add_handler(CallbackQueryHandler(callback_menu_rules, pattern=r"^menu_rules$"))
+    app.add_handler(CallbackQueryHandler(cmd_roles_info, pattern=r"^menu_roles$"))
+    app.add_handler(CallbackQueryHandler(cmd_profile, pattern=r"^menu_profile$"))
+
     app.add_handler(CallbackQueryHandler(callback_owner_role_option, pattern=r"^roleopt_"))
     app.add_handler(CallbackQueryHandler(callback_custom_role_select, pattern=r"^customset_"))
     app.add_handler(CallbackQueryHandler(callback_night_action, pattern=r"^nact_"))

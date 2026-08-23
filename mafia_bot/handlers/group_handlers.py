@@ -42,7 +42,6 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_markdown(msg, reply_markup=reply_markup)
 
-    # Schedule auto-start check if timer finishes
     context.job_queue.run_once(
         callback=auto_start_timer,
         when=REGISTRATION_TIME,
@@ -76,7 +75,6 @@ async def cmd_extend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No active registration lobby to extend!")
         return
 
-    # Remove existing job
     current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
     for j in current_jobs:
         j.schedule_removal()
@@ -95,31 +93,35 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     # Handle DM deep-link joining: /start join_CHATID
-    if chat.type == "private" and context.args and context.args[0].startswith("join_"):
-        try:
-            target_chat_id = int(context.args[0].replace("join_", ""))
-            game = await get_game(target_chat_id)
-            if not game or game["state"] != "LOBBY":
-                await update.message.reply_text("❌ This game lobby is no longer accepting new players!")
-                return
+    if chat.type == "private":
+        if context.args and context.args[0].startswith("join_"):
+            try:
+                target_chat_id = int(context.args[0].replace("join_", ""))
+                game = await get_game(target_chat_id)
+                if not game or game["state"] != "LOBBY":
+                    await update.message.reply_text("❌ This game lobby is no longer accepting new players!")
+                    return
 
-            players = await get_players(target_chat_id)
-            if any(p["user_id"] == user.id for p in players):
-                await update.message.reply_text("✅ You have already joined this game lobby!")
-                return
+                players = await get_players(target_chat_id)
+                if any(p["user_id"] == user.id for p in players):
+                    await update.message.reply_text("✅ You have already joined this game lobby!")
+                    return
 
-            await add_player(target_chat_id, user.id, user.username, user.full_name)
-            players_now = await get_players(target_chat_id)
-            await update.message.reply_text(f"🎉 You successfully joined the Mafia lobby! Total players: {len(players_now)}")
+                await add_player(target_chat_id, user.id, user.username, user.full_name)
+                players_now = await get_players(target_chat_id)
+                await update.message.reply_text(f"🎉 You successfully joined the Mafia lobby! Total players: {len(players_now)}")
 
-            # Announce in group
-            await context.bot.send_message(
-                chat_id=target_chat_id,
-                text=f"👤 **{user.full_name}** joined the game! Total registered: **{len(players_now)}**"
-            )
-        except Exception as e:
-            await update.message.reply_text("❌ Invalid join request.")
-        return
+                await context.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=f"👤 **{user.full_name}** joined the game! Total registered: **{len(players_now)}**"
+                )
+            except Exception:
+                await update.message.reply_text("❌ Invalid join request.")
+            return
+        else:
+            from handlers.dm_handlers import cmd_start_dm
+            await cmd_start_dm(update, context)
+            return
 
     # Normal group /start command
     if chat.type != "private":
@@ -133,7 +135,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ Need at least 4 players to start! Current players: {len(players)}")
             return
 
-        # Cancel lobby timer
         current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
         for j in current_jobs:
             j.schedule_removal()
@@ -150,14 +151,12 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No active game in this chat.")
         return
 
-    # Check if user is owner or admin
     if user.id != game["owner_id"]:
         member = await chat.get_member(user.id)
         if member.status not in ("administrator", "creator"):
             await update.message.reply_text("❌ Only the Game Host or Group Admins can stop the game!")
             return
 
-    # Cancel timers
     for prefix in ["registration", "night", "day_vote"]:
         jobs = context.job_queue.get_jobs_by_name(f"{prefix}_{chat.id}")
         for j in jobs:
@@ -199,12 +198,10 @@ async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     players = await get_players(chat_id)
     owner_id = game["owner_id"]
 
-    # Check if Owner is playing in this game
     owner_is_playing = any(p["user_id"] == owner_id for p in players)
 
     if owner_is_playing:
         await set_game_state(chat_id, "ROLE_ASSIGNMENT")
-        # Offer Owner option: Random or Custom Role Assign in DM
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎲 Assign Random Roles", callback_data=f"roleopt_rand_{chat_id}")],
             [InlineKeyboardButton("🎭 Custom Assign Roles", callback_data=f"roleopt_cust_{chat_id}")]
@@ -225,10 +222,8 @@ async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             )
             return
         except Exception:
-            # If owner hasn't started DM, fallback to auto-random
             pass
 
-    # Default fallback: Auto-assign random roles
     await assign_random_roles_and_start(context, chat_id)
 
 async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
@@ -238,7 +233,6 @@ async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat
 
     for p, role in zip(players, balanced_roles):
         await set_player_role(chat_id, p["user_id"], role)
-        # Notify each player in DM
         role_info = ROLES_INFO[role]
         dm_text = (
             f"🎭 **YOUR SECRET ROLE**: {role_info['name']}\n"
@@ -266,7 +260,6 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
         )
     )
 
-    # Build target inline keyboards for night action roles
     for p in players:
         role = p["role"]
         user_id = p["user_id"]
@@ -275,14 +268,10 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
         if not role_info or not role_info["has_night_action"]:
             continue
 
-        # Special check for Sergeant: only acts if role was promoted to DETECTIVE
-        # Build targets button list
         targets_buttons = []
         for target in players:
-            # Mafia can't target fellow Mafia
             if role in ("GODFATHER", "MAFIA") and target["role"] in ("GODFATHER", "MAFIA"):
                 continue
-            # Detective can't investigate self
             if role == "DETECTIVE" and target["user_id"] == user_id:
                 continue
 
@@ -304,7 +293,6 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
             except Exception:
                 pass
 
-    # Schedule night timer callback
     context.job_queue.run_once(
         callback=end_night_phase,
         when=NIGHT_TIME,
@@ -327,7 +315,6 @@ async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
     if deaths:
         names = [f"💀 **{d['full_name']}** ({ROLES_INFO[d['role']]['name']})" for d in deaths]
         death_text = "The morning comes with terrible news... The following were eliminated during the night:\n" + "\n".join(names)
-        # Send DM to dead players for Last Words
         for d in deaths:
             try:
                 await context.bot.send_message(
@@ -344,14 +331,12 @@ async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
         text=f"☀️ **DAY {round_num} BREAKS** ☀️\n\n{death_text}"
     )
 
-    # Check Win Condition after night deaths
     win_res = await check_win_condition(chat_id)
     if win_res:
         await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
         await set_game_state(chat_id, "ENDED")
         return
 
-    # Move to Day Voting Phase via secret DM
     await start_day_voting_phase(context, chat_id, round_num)
 
 async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
@@ -419,7 +404,6 @@ async def end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE):
             )
         )
 
-        # Notify lynched player DM for last words
         try:
             await context.bot.send_message(
                 chat_id=lynched["user_id"],
@@ -428,7 +412,6 @@ async def end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # Check Jester instant win
         if lynch_res.get("is_jester"):
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -444,12 +427,10 @@ async def end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE):
             text=f"⚖️ **DAY {round_num} LYNCHING RESULTS** ⚖️\n\n{reason}"
         )
 
-    # Check Win Condition after lynching
     win_res = await check_win_condition(chat_id)
     if win_res:
         await context.bot.send_message(chat_id=chat_id, text=win_res["text"])
         await set_game_state(chat_id, "ENDED")
         return
 
-    # Advance to next Night Phase
     await start_night_phase(context, chat_id, round_num + 1)
