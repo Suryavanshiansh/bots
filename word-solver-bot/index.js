@@ -107,23 +107,28 @@ bot.command('reset', (ctx) => {
   ctx.reply('🔄 Session reset! Send a new grid image or clue list to start a fresh puzzle.');
 });
 
-// Photo Handler
-bot.on('photo', async (ctx) => {
+async function processMediaMessage(ctx, fileId, mimeType = 'image/jpeg') {
   const chatId = ctx.chat.id;
   const session = getSession(chatId);
 
   try {
     const photos = ctx.message.photo;
-    const highestResPhoto = photos[photos.length - 1];
+    const highestResPhoto = photos ? photos[photos.length - 1] : null;
 
     await ctx.reply('🔍 Extracting grid & clues from image using Gemini Vision...');
 
-    const fileUrl = await ctx.telegram.getFileLink(highestResPhoto.file_id);
+    const fileUrl = await ctx.telegram.getFileLink(fileId);
     const response = await fetch(fileUrl.href);
     const arrayBuffer = await response.arrayBuffer();
     const imageBuffer = Buffer.from(arrayBuffer);
 
-    const extractedText = await extractGridFromImage(imageBuffer, 'image/jpeg', GEMINI_API_KEY);
+    let extractedText = '';
+    try {
+      extractedText = await extractGridFromImage(imageBuffer, mimeType, GEMINI_API_KEY);
+    } catch (e) {
+      console.warn('Gemini OCR extraction warning:', e.message);
+    }
+
     const extractedGrid = parseGrid(extractedText);
     const extractedClues = parseClues(extractedText);
 
@@ -146,12 +151,17 @@ bot.on('photo', async (ctx) => {
         session.clues = captionClues;
         updatedClues = true;
       }
+      const captionGrid = parseGrid(ctx.message.caption);
+      if (captionGrid && captionGrid.length >= 2 && captionGrid[0].length >= 2) {
+        session.grid = captionGrid;
+        updatedGrid = true;
+      }
     }
 
     saveSessionsToDisk();
 
     if (updatedGrid && updatedClues) {
-      await ctx.reply(`✅ Extracted Grid (${session.grid.length}x${session.grid[0].length}) and ${session.clues.length} clues from image!`);
+      await ctx.reply(`✅ Extracted Grid (${session.grid.length}x${session.grid[0].length}) and ${session.clues.length} clues!`);
       runSolverAndReply(ctx, session);
     } else if (updatedGrid) {
       await ctx.reply(`✅ Grid extracted successfully (${session.grid.length}x${session.grid[0].length})!`);
@@ -161,19 +171,33 @@ bot.on('photo', async (ctx) => {
         await ctx.reply('Now send or reply with the clues list (e.g. `B--- (4)`, `C----- (6)`, or full words).');
       }
     } else if (updatedClues) {
-      await ctx.reply(`✅ Parsed ${session.clues.length} clues from image!`);
+      await ctx.reply(`✅ Parsed ${session.clues.length} clues!`);
       if (session.grid && session.grid.length > 0) {
         runSolverAndReply(ctx, session);
       } else {
         await ctx.reply('Now send an image of the word search grid to solve!');
       }
     } else {
-      await ctx.reply('❌ Failed to parse grid or clues from image. Please ensure the image is clear and try again.');
+      await ctx.reply('❌ Failed to parse grid or clues from the file. Please ensure the image is clear and try again.');
     }
   } catch (err) {
-    console.error('Error handling photo:', err);
+    console.error('Error handling media:', err);
     ctx.reply(`❌ Error processing image: ${err.message}`);
   }
+}
+
+// Photo Handler
+bot.on('photo', async (ctx) => {
+  const photos = ctx.message.photo;
+  const highestResPhoto = photos[photos.length - 1];
+  await processMediaMessage(ctx, highestResPhoto.file_id, 'image/jpeg');
+});
+
+// Document / File Attachment Handler (Handles forwarded image documents)
+bot.on('document', async (ctx) => {
+  const doc = ctx.message.document;
+  const mime = doc.mime_type || 'image/jpeg';
+  await processMediaMessage(ctx, doc.file_id, mime);
 });
 
 // Text Handler
