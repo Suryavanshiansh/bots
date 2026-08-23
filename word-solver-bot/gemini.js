@@ -1,11 +1,12 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const CANDIDATE_MODELS = [
-  'gemini-2.5-flash',
   'gemini-3.6-flash',
-  'gemini-3.5-flash',
   'gemini-2.5-flash-lite',
-  'gemini-flash-latest'
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash'
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -71,6 +72,16 @@ Important rules:
         console.warn(`Model ${modelName} attempt ${attempt} error: ${err.message}`);
         lastError = err;
 
+        // Skip to next model immediately if 404 Not Found or deprecated
+        if (err.message && (
+          err.message.includes('404') ||
+          err.message.includes('not found') ||
+          err.message.includes('no longer available')
+        )) {
+          console.warn(`Model ${modelName} unavailable or deprecated. Skipping immediately to next model...`);
+          break;
+        }
+
         // Handle temporary 503 high demand or 429 rate limit errors with exponential retry
         const isTemporaryError = err.message && (
           err.message.includes('503') ||
@@ -80,8 +91,8 @@ Important rules:
         );
 
         if (isTemporaryError && attempt < 3) {
-          console.log(`⏳ Server busy (503/429). Retrying in 1.5 seconds...`);
-          await sleep(1500);
+          console.log(`⏳ Server busy (503/429). Retrying in 1 second...`);
+          await sleep(1000);
           continue;
         }
 
