@@ -11,6 +11,28 @@ from game.setup import get_balanced_roles
 from game.roles import ROLES_INFO
 from game.engine import check_win_condition, process_night_actions, process_day_votes
 
+async def check_and_clean_stale_game(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
+    """If a lobby timer has expired, auto-trigger start sequence or cleanup."""
+    game = await get_game(chat_id)
+    if not game:
+        return False
+
+    now = int(time.time())
+    if game["state"] == "LOBBY" and game["expires_at"] <= now:
+        players = await get_players(chat_id)
+        if len(players) >= 3:
+            await start_game_sequence(context, chat_id)
+            return True
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Registration time expired! Need at least 3 players to start (joined: {len(players)}).\nLobby closed. Use `/game` to try again!"
+            )
+            await delete_game(chat_id)
+            return True
+
+    return False
+
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command /game or /game@bot to open a game lobby in group."""
     chat = update.effective_chat
@@ -20,7 +42,13 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please use `/game` in a Telegram Group chat to start a Mafia game!")
         return
 
-    game = await get_game(chat.id)
+    # Check if existing lobby is stale
+    stale_handled = await check_and_clean_stale_game(context, chat.id)
+    if stale_handled:
+        game = None
+    else:
+        game = await get_game(chat.id)
+
     if game and game["state"] != "ENDED":
         now = int(time.time())
         rem = max(0, game["expires_at"] - now)
@@ -28,7 +56,7 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚠️ A game match is already active in this group!\n"
             f"**Phase**: `{game['state']}`\n"
             f"⏱️ **Time Left**: **{rem} seconds**\n"
-            f"Use `/status` to check players or `/stop` to cancel."
+            f"Use `/status` to check players, `/start` to start now, or `/stop` to cancel."
         )
         return
 
@@ -51,30 +79,18 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_markdown(msg, reply_markup=reply_markup)
 
-    context.job_queue.run_once(
-        callback=auto_start_timer,
-        when=REGISTRATION_TIME,
-        chat_id=chat.id,
-        name=f"registration_{chat.id}"
-    )
+    if context.job_queue:
+        context.job_queue.run_once(
+            callback=auto_start_timer,
+            when=REGISTRATION_TIME,
+            chat_id=chat.id,
+            name=f"registration_{chat.id}"
+        )
 
 async def auto_start_timer(context: ContextTypes.DEFAULT_TYPE):
     """Auto-start callback when registration timer expires."""
     chat_id = context.job.chat_id
-    game = await get_game(chat_id)
-    if not game or game["state"] != "LOBBY":
-        return
-
-    players = await get_players(chat_id)
-    if len(players) < 3:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Game canceled! Need at least 3 players to start (currently joined: {len(players)}).\nUse `/game` to try again!"
-        )
-        await delete_game(chat_id)
-        return
-
-    await start_game_sequence(context, chat_id)
+    await check_and_clean_stale_game(context, chat_id)
 
 async def cmd_extend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command /extend to add registration time."""
@@ -86,21 +102,24 @@ async def cmd_extend(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     rem_time = await extend_game_timer(chat.id, extra_sec=EXTEND_TIME)
 
-    current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
-    for j in current_jobs:
-        j.schedule_removal()
+    if context.job_queue:
+        current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
+        for j in current_jobs:
+            j.schedule_removal()
 
-    context.job_queue.run_once(
-        callback=auto_start_timer,
-        when=rem_time,
-        chat_id=chat.id,
-        name=f"registration_{chat.id}"
-    )
+        context.job_queue.run_once(
+            callback=auto_start_timer,
+            when=rem_time,
+            chat_id=chat.id,
+            name=f"registration_{chat.id}"
+        )
     await update.message.reply_text(f"⏱️ Registration time extended! **{rem_time} seconds remaining**.")
 
 async def cmd_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command /time to check how much time is left in current phase."""
     chat = update.effective_chat
+    await check_and_clean_stale_game(context, chat.id)
+
     game = await get_game(chat.id)
     if not game or game["state"] == "ENDED":
         await update.message.reply_text("⚠️ No active game in progress.")
@@ -162,9 +181,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ Need at least 3 players to start! Current joined: {len(players)}")
             return
 
-        current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
-        for j in current_jobs:
-            j.schedule_removal()
+        if context.job_queue:
+            current_jobs = context.job_queue.get_jobs_by_name(f"registration_{chat.id}")
+            for j in current_jobs:
+                j.schedule_removal()
 
         await start_game_sequence(context, chat.id)
 
@@ -184,10 +204,11 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Only the Game Host or Group Admins can stop the game!")
             return
 
-    for prefix in ["registration", "night", "day_vote"]:
-        jobs = context.job_queue.get_jobs_by_name(f"{prefix}_{chat.id}")
-        for j in jobs:
-            j.schedule_removal()
+    if context.job_queue:
+        for prefix in ["registration", "night", "day_vote"]:
+            jobs = context.job_queue.get_jobs_by_name(f"{prefix}_{chat.id}")
+            for j in jobs:
+                j.schedule_removal()
 
     await delete_game(chat.id)
     await update.message.reply_text("🛑 **The Mafia game has been canceled.**")
@@ -195,6 +216,8 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command /status to display current game state, alive player list, and role summary."""
     chat = update.effective_chat
+    await check_and_clean_stale_game(context, chat.id)
+
     game = await get_game(chat.id)
     if not game:
         await update.message.reply_text("⚠️ No active game in this chat. Use `/game` to start one!")
@@ -296,7 +319,6 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
         )
     )
 
-    # Detailed atmospheric messages tailored to present roles
     if "GODFATHER" in roles_present:
         await asyncio.sleep(1)
         await context.bot.send_message(chat_id=chat_id, text="🎩 **Don is giving secret orders to the Mafia...**")
@@ -321,7 +343,6 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
         await asyncio.sleep(1)
         await context.bot.send_message(chat_id=chat_id, text="🔪 **Serial Killer is lurking in the shadows...**")
 
-    # Send action DM panels to players with night actions
     for p in players:
         role = p["role"]
         user_id = p["user_id"]
@@ -355,12 +376,13 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
             except Exception:
                 pass
 
-    context.job_queue.run_once(
-        callback=end_night_phase,
-        when=NIGHT_TIME,
-        chat_id=chat_id,
-        name=f"night_{chat_id}"
-    )
+    if context.job_queue:
+        context.job_queue.run_once(
+            callback=end_night_phase,
+            when=NIGHT_TIME,
+            chat_id=chat_id,
+            name=f"night_{chat_id}"
+        )
 
 async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
     """Processes night actions, announces casualties with role summary, and moves to Day Voting."""
@@ -456,12 +478,13 @@ async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         except Exception:
             pass
 
-    context.job_queue.run_once(
-        callback=end_day_voting_phase,
-        when=DAY_VOTE_TIME,
-        chat_id=chat_id,
-        name=f"day_vote_{chat_id}"
-    )
+    if context.job_queue:
+        context.job_queue.run_once(
+            callback=end_day_voting_phase,
+            when=DAY_VOTE_TIME,
+            chat_id=chat_id,
+            name=f"day_vote_{chat_id}"
+        )
 
 async def end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE):
     """Tallies Day votes and handles lynching."""
