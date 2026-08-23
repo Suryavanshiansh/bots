@@ -16,7 +16,8 @@ from handlers.group_handlers import (
     cmd_game, cmd_extend, cmd_start, cmd_stop, cmd_status
 )
 from handlers.dm_handlers import (
-    cmd_profile, cmd_roles_info, callback_menu_rules,
+    cmd_profile, cmd_roles_info, cmd_shop, cmd_inventory,
+    callback_menu_rules, callback_buy_powerup,
     callback_owner_role_option, callback_custom_role_select,
     callback_night_action, callback_day_vote, handle_dm_last_word
 )
@@ -66,12 +67,18 @@ def main():
     app.add_handler(CommandHandler(["status", "status_bot"], cmd_status))
     app.add_handler(CommandHandler("profile", cmd_profile))
     app.add_handler(CommandHandler(["roles", "help"], cmd_roles_info))
+    app.add_handler(CommandHandler("shop", cmd_shop))
+    app.add_handler(CommandHandler(["inventory", "items"], cmd_inventory))
+    app.add_handler(CommandHandler(["coins", "balance", "wallet"], cmd_profile))
     app.add_handler(CommandHandler("gamelog", cmd_gamelog))
 
     # Callback Query Handlers (Menu & Game Buttons)
     app.add_handler(CallbackQueryHandler(callback_menu_rules, pattern=r"^menu_rules$"))
     app.add_handler(CallbackQueryHandler(cmd_roles_info, pattern=r"^menu_roles$"))
     app.add_handler(CallbackQueryHandler(cmd_profile, pattern=r"^menu_profile$"))
+    app.add_handler(CallbackQueryHandler(cmd_shop, pattern=r"^menu_shop$"))
+    app.add_handler(CallbackQueryHandler(cmd_inventory, pattern=r"^menu_inventory$"))
+    app.add_handler(CallbackQueryHandler(callback_buy_powerup, pattern=r"^buypup_"))
 
     app.add_handler(CallbackQueryHandler(callback_owner_role_option, pattern=r"^roleopt_"))
     app.add_handler(CallbackQueryHandler(callback_custom_role_select, pattern=r"^customset_"))

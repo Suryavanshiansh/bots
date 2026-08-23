@@ -2,53 +2,62 @@ import asyncio
 from typing import Dict, List, Optional
 from database import (
     get_game, get_players, set_game_state, set_player_dead,
-    get_night_actions, get_day_votes, log_night_action, record_day_vote
+    get_night_actions, get_day_votes, log_night_action, record_day_vote,
+    record_win
 )
 from game.roles import ROLES_INFO
 
 async def check_win_condition(chat_id: int) -> Optional[Dict]:
     """
-    Checks if any team has met win conditions.
+    Checks if any team has met win conditions and awards win coins (25 coins).
     Returns dict with winner info if ended, else None.
     """
-    players = await get_players(chat_id, alive_only=True)
-    if not players:
+    players = await get_players(chat_id, alive_only=False) # Get all players to reward winners
+    alive_players = [p for p in players if p["is_alive"]]
+
+    if not alive_players:
         return {"winner": "NOBODY", "text": "Everyone died! It's a draw! 💀"}
 
-    mafia_count = sum(1 for p in players if p["role"] in ("GODFATHER", "MAFIA"))
-    sk_count = sum(1 for p in players if p["role"] == "SERIAL_KILLER")
-    town_count = sum(1 for p in players if p["role"] not in ("GODFATHER", "MAFIA", "SERIAL_KILLER", "JESTER"))
-    jester_count = sum(1 for p in players if p["role"] == "JESTER")
-    total_alive = len(players)
+    mafia_count = sum(1 for p in alive_players if p["role"] in ("GODFATHER", "MAFIA"))
+    sk_count = sum(1 for p in alive_players if p["role"] == "SERIAL_KILLER")
+    town_count = sum(1 for p in alive_players if p["role"] not in ("GODFATHER", "MAFIA", "SERIAL_KILLER", "JESTER"))
+    jester_count = sum(1 for p in alive_players if p["role"] == "JESTER")
+    total_alive = len(alive_players)
 
-    # 1. Serial Killer Win: SK is alive and only 1 or 2 players total remain (and no Mafia)
+    # 1. Serial Killer Win
     if sk_count > 0 and (total_alive <= 2) and mafia_count == 0:
+        for p in players:
+            if p["role"] == "SERIAL_KILLER":
+                await record_win(p["user_id"], "SERIAL_KILLER")
         return {
             "winner": "SERIAL_KILLER",
-            "text": "🔪 **SERIAL KILLER WINS!** The lone killer outlasted everyone and purged the city!"
+            "text": "🔪 **SERIAL KILLER WINS!** The lone killer outlasted everyone and purged the city!\n🪙 **+25 Winner Coins Awarded!**"
         }
 
-    # 2. Villagers Win: All Mafia & Serial Killer eliminated
+    # 2. Villagers Win
     if mafia_count == 0 and sk_count == 0:
+        for p in players:
+            if p["role"] not in ("GODFATHER", "MAFIA", "SERIAL_KILLER", "JESTER"):
+                await record_win(p["user_id"], "TOWN")
         return {
             "winner": "TOWN",
-            "text": "🎉 **TOWN WINS!** All evil forces have been eliminated from the city!"
+            "text": "🎉 **TOWN WINS!** All evil forces have been eliminated from the city!\n🪙 **+25 Winner Coins Awarded to all Town Members!**"
         }
 
-    # 3. Mafia Wins: Mafia count >= Town + Jester count AND no Serial Killer
+    # 3. Mafia Wins
     if mafia_count >= (town_count + jester_count) and sk_count == 0:
+        for p in players:
+            if p["role"] in ("GODFATHER", "MAFIA"):
+                await record_win(p["user_id"], "MAFIA")
         return {
             "winner": "MAFIA",
-            "text": "🔴 **MAFIA WINS!** The Mafia has reached numerical control of the city!"
+            "text": "🔴 **MAFIA WINS!** The Mafia has reached numerical control of the city!\n🪙 **+25 Winner Coins Awarded to all Mafia Members!**"
         }
 
     return None
 
 async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
-    """
-    Processes secret night actions (Doctor save, Mafia kill, SK kill, Vigilante shoot, Detective check).
-    Returns summary result for group announcement.
-    """
+    """Processes secret night actions (Doctor save, Vest protection, Mafia kill, SK kill, Vigilante shoot)."""
     actions = await get_night_actions(chat_id, phase_round)
     players = await get_players(chat_id, alive_only=True)
     player_dict = {p["user_id"]: p for p in players}
@@ -57,7 +66,6 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
     mafia_targets = []
     sk_targets = []
     vig_targets = []
-    detective_checks = []
 
     for act in actions:
         actor_id = act["actor_id"]
@@ -74,13 +82,10 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
         elif action_type == "SHOOT" and role == "VIGILANTE":
             vig_targets.append(target_id)
 
-    # Determine Mafia consensus target
     mafia_final_target = None
     if mafia_targets:
-        # Pick most voted target by Mafia
         mafia_final_target = max(set(mafia_targets), key=mafia_targets.count)
 
-    # Collect all attack targets
     attack_targets = set()
     if mafia_final_target:
         attack_targets.add(mafia_final_target)
@@ -89,25 +94,18 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
     for t in vig_targets:
         attack_targets.add(t)
 
-    # Filter out saved targets
     deaths = []
     for target_id in attack_targets:
         if target_id in saved_player_ids:
-            continue # Saved by Doctor!
+            continue
         if target_id in player_dict:
-            await set_player_dead(chat_id, target_id)
-            deaths.append(player_dict[target_id])
+            target_player = player_dict[target_id]
+            # Check Bulletproof Vest powerup
+            if target_player.get("has_vest"):
+                continue # Vest absorbed the shot!
 
-    # Check if original Detective died, promote Sergeant if alive
-    alive_detective = any(p["role"] == "DETECTIVE" and p["is_alive"] for p in players if p["user_id"] not in [d["user_id"] for d in deaths])
-    if not alive_detective:
-        # Promote Sergeant to Detective if Sergeant exists and is alive
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE players SET role = 'DETECTIVE' WHERE chat_id = ? AND role = 'SERGEANT' AND is_alive = 1",
-                (chat_id,)
-            )
-            await db.commit()
+            await set_player_dead(chat_id, target_id)
+            deaths.append(target_player)
 
     return {
         "deaths": deaths,
@@ -115,10 +113,7 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
     }
 
 async def process_day_votes(chat_id: int, phase_round: int) -> Dict:
-    """
-    Tallies votes cast via DM inline keyboard during Day phase.
-    Returns lynch result dict.
-    """
+    """Tallies votes cast via DM inline keyboard during Day phase."""
     votes = await get_day_votes(chat_id, phase_round)
     players = await get_players(chat_id, alive_only=True)
     player_map = {p["user_id"]: p for p in players}
@@ -132,7 +127,6 @@ async def process_day_votes(chat_id: int, phase_round: int) -> Dict:
     if not tally:
         return {"lynched": None, "reason": "No votes were cast during the day!"}
 
-    # Find highest votes
     max_votes = max(tally.values())
     top_candidates = [tid for tid, count in tally.items() if count == max_votes]
 
@@ -144,6 +138,9 @@ async def process_day_votes(chat_id: int, phase_round: int) -> Dict:
 
     if lynched_player:
         await set_player_dead(chat_id, lynched_id)
+        if lynched_player["role"] == "JESTER":
+            await record_win(lynched_id, "JESTER")
+
         return {
             "lynched": lynched_player,
             "votes_count": max_votes,
