@@ -116,7 +116,7 @@ bot.on('photo', async (ctx) => {
     const photos = ctx.message.photo;
     const highestResPhoto = photos[photos.length - 1];
 
-    await ctx.reply('🔍 Extracting grid from image using Gemini Vision...');
+    await ctx.reply('🔍 Extracting grid & clues from image using Gemini Vision...');
 
     const fileUrl = await ctx.telegram.getFileLink(highestResPhoto.file_id);
     const response = await fetch(fileUrl.href);
@@ -124,23 +124,51 @@ bot.on('photo', async (ctx) => {
     const imageBuffer = Buffer.from(arrayBuffer);
 
     const extractedText = await extractGridFromImage(imageBuffer, 'image/jpeg', GEMINI_API_KEY);
-    const grid = parseGrid(extractedText);
+    const extractedGrid = parseGrid(extractedText);
+    const extractedClues = parseClues(extractedText);
 
-    if (grid && grid.length > 0) {
-      session.grid = grid;
-      saveSessionsToDisk();
-      await ctx.reply(`✅ Grid extracted successfully (${grid.length}x${grid[0].length})!\n\nNow send or reply with the clues list (e.g. \`B--- (4)\`, \`C----- (6)\`).`);
-    } else {
-      await ctx.reply('❌ Failed to parse grid from image. Please ensure the image is clear and try again.');
+    let updatedGrid = false;
+    let updatedClues = false;
+
+    if (extractedGrid && extractedGrid.length >= 2 && extractedGrid[0].length >= 2) {
+      session.grid = extractedGrid;
+      updatedGrid = true;
+    }
+
+    if (extractedClues && extractedClues.length > 0) {
+      session.clues = extractedClues;
+      updatedClues = true;
     }
 
     if (ctx.message.caption) {
-      const clues = parseClues(ctx.message.caption);
-      if (clues && clues.length > 0) {
-        session.clues = clues;
-        saveSessionsToDisk();
-        runSolverAndReply(ctx, session);
+      const captionClues = parseClues(ctx.message.caption);
+      if (captionClues && captionClues.length > 0) {
+        session.clues = captionClues;
+        updatedClues = true;
       }
+    }
+
+    saveSessionsToDisk();
+
+    if (updatedGrid && updatedClues) {
+      await ctx.reply(`✅ Extracted Grid (${session.grid.length}x${session.grid[0].length}) and ${session.clues.length} clues from image!`);
+      runSolverAndReply(ctx, session);
+    } else if (updatedGrid) {
+      await ctx.reply(`✅ Grid extracted successfully (${session.grid.length}x${session.grid[0].length})!`);
+      if (session.clues && session.clues.length > 0) {
+        runSolverAndReply(ctx, session);
+      } else {
+        await ctx.reply('Now send or reply with the clues list (e.g. `B--- (4)`, `C----- (6)`, or full words).');
+      }
+    } else if (updatedClues) {
+      await ctx.reply(`✅ Parsed ${session.clues.length} clues from image!`);
+      if (session.grid && session.grid.length > 0) {
+        runSolverAndReply(ctx, session);
+      } else {
+        await ctx.reply('Now send an image of the word search grid to solve!');
+      }
+    } else {
+      await ctx.reply('❌ Failed to parse grid or clues from image. Please ensure the image is clear and try again.');
     }
   } catch (err) {
     console.error('Error handling photo:', err);

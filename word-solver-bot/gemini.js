@@ -18,17 +18,33 @@ export async function extractGridFromImage(imageBuffer, mimeType = 'image/jpeg',
   const genAI = new GoogleGenerativeAI(apiKey);
 
   const prompt = `You are an expert helper for word search puzzles.
-Analyze the provided image of a word search puzzle grid.
-Extract all the letters in the grid and format them as a 2D text grid.
-Return ONLY the grid of uppercase letters, where:
-- Letters in the same row are separated by a single space.
-- Each row is on a new line.
-- Do NOT add any markdown formatting (like \`\`\` or \`), headers, page numbers, or introductory text. Just the grid itself.
+Analyze the provided image of a word search puzzle.
 
-Example output format:
-U S I L V E R U T N
-H X A D R I B G C U
-A U X T N Q O E N K`;
+The image may contain:
+1. A 2D letter grid of the word search puzzle.
+2. A list of clues / words to find (e.g., "B--- (4)", "C----- (6)", "S........ (9)", or full words like "SILVER", "CUSTOMER").
+3. BOTH the letter grid and the list of clues/words in the same image.
+
+Your task:
+- If a letter grid is present, extract all the uppercase letters row by row. Format each row with single space separated uppercase letters.
+- If a list of clues/words is present, extract all the clues/words line by line exactly as shown.
+
+Return the result strictly in this format:
+
+GRID:
+<Row 1 letters separated by single space>
+<Row 2 letters separated by single space>
+...
+
+CLUES:
+<Clue line 1>
+<Clue line 2>
+...
+
+Important rules:
+- If no grid is present, omit the GRID: section.
+- If no clues are present, omit the CLUES: section.
+- Do NOT add markdown code blocks (like \`\`\` or \`), headers, page numbers, or extra text outside GRID: and CLUES:.`;
 
   const imagePart = {
     inlineData: {

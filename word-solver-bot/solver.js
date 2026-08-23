@@ -10,26 +10,88 @@ const DIRECTIONS = [
 ];
 
 /**
- * Parse clues from text message.
- * Matches lines like: B--- (4), C----- (6), S-------- (9), etc.
+ * Parse clues from text message or OCR output.
+ * Matches multiple format types:
+ * 1. Pattern clues with length: B--- (4), 1. B----- (6), 2) C..... (6), S________ (9)
+ * 2. Pattern clues without length: B---, C------, S......
+ * 3. Full word clues: SILVER, CUSTOMER, 1. SILVER (6)
  */
 export function parseClues(text) {
-  const lines = text.split(/\r?\n/);
+  if (!text) return [];
+
+  let cleanText = text;
+  // If CLUES: section is present in OCR output, extract text under CLUES:
+  const cluesSectionMatch = text.match(/CLUES:\s*\n([\s\S]*?)(?=\n\s*GRID:|$)/i);
+  if (cluesSectionMatch) {
+    cleanText = cluesSectionMatch[1].trim();
+  }
+
+  const lines = cleanText.split(/\r?\n/);
   const clues = [];
   let index = 1;
 
-  // Regex matches: Letter, followed by hyphens/dashes/underscores, followed by (Length)
-  const clueRegex = /^\s*([A-Z])[-_\u2013\u2014.]+\s*\(([0-9]+)\)/i;
-
   for (const line of lines) {
-    const match = line.trim().match(clueRegex);
-    if (match) {
+    const rawLine = line.trim();
+    if (!rawLine) continue;
+
+    // Ignore section headers or common title lines
+    if (/^(GRID|CLUES|FIND THESE WORDS|HARD MODE|REPLAY|REFRESH|SOLVER)/i.test(rawLine)) continue;
+
+    // Strip leading number or bullet prefixes (e.g., "1. ", "1) ", "- ", "* ", "• ")
+    const stripped = rawLine.replace(/^(?:\d+[\.\)]|[-*•])\s*/, '').trim();
+    if (!stripped) continue;
+
+    // Format 1: Pattern clue with explicit length in parentheses/brackets e.g. B--- (4) or B... [4]
+    const patternWithLenMatch = stripped.match(/^([A-Z])[-_\u2013\u2014.*~]+\s*[\(\[:]\s*(\d+)\s*[\)\]]?/i);
+    if (patternWithLenMatch) {
       clues.push({
         id: index++,
-        letter: match[1].toUpperCase(),
-        length: parseInt(match[2], 10),
-        raw: line.trim()
+        letter: patternWithLenMatch[1].toUpperCase(),
+        length: parseInt(patternWithLenMatch[2], 10),
+        raw: rawLine
       });
+      continue;
+    }
+
+    // Format 2: Pattern clue WITHOUT explicit length e.g. B--- or C------ or S......
+    const patternNoLenMatch = stripped.match(/^([A-Z])([-_\u2013\u2014.*~]+)$/i);
+    if (patternNoLenMatch) {
+      const letter = patternNoLenMatch[1].toUpperCase();
+      const patternChars = patternNoLenMatch[2];
+      const length = 1 + patternChars.length;
+      clues.push({
+        id: index++,
+        letter,
+        length,
+        raw: rawLine
+      });
+      continue;
+    }
+
+    // Format 3: Pattern with underscores/dots in middle e.g. S_LV_R (6) or S..V.R (6)
+    const partialPatternMatch = stripped.match(/^([A-Z][A-Z-_\u2013\u2014.*~]+)\s*[\(\[:]\s*(\d+)\s*[\)\]]?/i);
+    if (partialPatternMatch && /[ -_\u2013\u2014.*~]/.test(partialPatternMatch[1])) {
+      clues.push({
+        id: index++,
+        letter: partialPatternMatch[1][0].toUpperCase(),
+        length: parseInt(partialPatternMatch[2], 10),
+        raw: rawLine
+      });
+      continue;
+    }
+
+    // Format 4: Full word clue with or without explicit length e.g. "SILVER", "SILVER (6)", "CUSTOMER"
+    const fullWordMatch = stripped.match(/^([A-Z]{3,})\s*(?:\([\d]+\))?$/i);
+    if (fullWordMatch) {
+      const word = fullWordMatch[1].toUpperCase();
+      clues.push({
+        id: index++,
+        letter: word[0],
+        length: word.length,
+        exactWord: word,
+        raw: rawLine
+      });
+      continue;
     }
   }
 
@@ -37,7 +99,7 @@ export function parseClues(text) {
 }
 
 /**
- * Parse a raw text grid extracted from image OCR.
+ * Parse a raw text grid extracted from image OCR or user text.
  */
 export function parseGrid(text) {
   if (!text) return null;
@@ -45,31 +107,49 @@ export function parseGrid(text) {
   // Strip code blocks if present
   let cleanText = text.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '').trim();
 
+  // If GRID: section exists, extract text under GRID:
+  const gridSectionMatch = cleanText.match(/GRID:\s*\n([\s\S]*?)(?=\n\s*CLUES:|$)/i);
+  if (gridSectionMatch) {
+    cleanText = gridSectionMatch[1].trim();
+  }
+
   const lines = cleanText
     .split(/\r?\n/)
-    .map(line => line.trim().toUpperCase())
+    .map(line => line.trim())
     .filter(line => line.length > 0);
 
   if (lines.length === 0) return null;
 
   const grid = [];
   for (const line of lines) {
-    // Ignore markdown table headers like |---|---|
-    if (/^[|\s\-+]+$/.test(line)) continue;
+    const upperLine = line.toUpperCase();
 
-    if (line.includes('|')) {
-      const letters = line.split('|').map(c => c.trim()).filter(c => c.length === 1 && /[A-Z]/.test(c));
+    // Ignore section headers and common title lines
+    if (/^(GRID|CLUES|FIND|CHALLENGE|WORDS|MODE)/i.test(upperLine)) continue;
+    // Ignore markdown table headers like |---|---|
+    if (/^[|\s\-+]+$/.test(upperLine)) continue;
+    // Ignore lines that look like clues (e.g. B--- (4), SILVER, 1. B---)
+    if (/([A-Z])[-_\u2013\u2014.*~]{2,}/i.test(upperLine)) continue;
+    if (/\(\d+\)/.test(upperLine)) continue;
+
+    if (upperLine.includes('|')) {
+      const letters = upperLine.split('|').map(c => c.trim()).filter(c => c.length === 1 && /[A-Z]/.test(c));
       if (letters.length > 0) grid.push(letters);
-    } else if (line.includes(' ')) {
-      const letters = line.split(/\s+/).filter(c => c.length === 1 && /[A-Z]/.test(c));
+    } else if (upperLine.includes(' ')) {
+      const letters = upperLine.split(/\s+/).filter(c => c.length === 1 && /[A-Z]/.test(c));
       if (letters.length > 0) grid.push(letters);
     } else {
-      const lettersOnly = line.replace(/[^A-Z]/g, '');
+      const lettersOnly = upperLine.replace(/[^A-Z]/g, '');
       if (lettersOnly.length >= 3) grid.push(lettersOnly.split(''));
     }
   }
 
-  return grid.length > 0 ? grid : null;
+  if (grid.length < 2) return null;
+  const rowLen = grid[0].length;
+  if (rowLen < 2) return null;
+
+  const validGrid = grid.filter(row => row.length === rowLen);
+  return validGrid.length >= 2 ? validGrid : null;
 }
 
 /**
@@ -100,7 +180,16 @@ export function solvePuzzle(grid, clues, dictionary) {
                 word += grid[r + i * dir.dr][c + i * dir.dc];
               }
 
-              if (dictionary.has(word)) {
+              if (clue.exactWord) {
+                if (word === clue.exactWord) {
+                  rawCandidates.push({
+                    word,
+                    start: { row: r + 1, col: c + 1 }, // 1-indexed for display
+                    end: { row: endR + 1, col: endC + 1 },
+                    direction: dir.name
+                  });
+                }
+              } else if (dictionary.has(word)) {
                 rawCandidates.push({
                   word,
                   start: { row: r + 1, col: c + 1 }, // 1-indexed for display
