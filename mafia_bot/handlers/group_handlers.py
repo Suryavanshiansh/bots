@@ -287,7 +287,7 @@ async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat
     await start_night_phase(context, chat_id, round_num=1)
 
 async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
-    """Transitions game to Night Phase, sends tailored atmospheric night status messages according to active roles."""
+    """Transitions game to Night Phase, sends tailored atmospheric night status messages, and DM action panels with Skip options."""
     await set_game_state(chat_id, "NIGHT", phase_round=round_num, duration_sec=NIGHT_TIME)
     players = await get_players(chat_id, alive_only=True)
     roles_present = set(p["role"] for p in players)
@@ -344,8 +344,8 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
             cb_data = f"nact_{chat_id}_{round_num}_{role}_{target['user_id']}"
             targets_buttons.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
 
-        if role == "VIGILANTE":
-            targets_buttons.append([InlineKeyboardButton("⏭️ Skip Shooting Tonight", callback_data=f"nact_{chat_id}_{round_num}_VIGILANTE_0")])
+        # Add Skip/Pass options for ALL night action roles including Don & Mafia
+        targets_buttons.append([InlineKeyboardButton("⏭️ Skip Action Tonight", callback_data=f"nact_{chat_id}_{round_num}_{role}_0")])
 
         if targets_buttons:
             keyboard = InlineKeyboardMarkup(targets_buttons)
@@ -360,15 +360,19 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
 
     if context.job_queue:
         context.job_queue.run_once(
-            callback=end_night_phase,
+            callback=end_night_phase_job,
             when=NIGHT_TIME,
             chat_id=chat_id,
             name=f"night_{chat_id}"
         )
 
-async def end_night_phase(context: ContextTypes.DEFAULT_TYPE):
-    """Processes night actions, announces casualties with role summary, and moves to Day Voting."""
+async def end_night_phase_job(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue wrapper for ending night phase when timer expires."""
     chat_id = context.job.chat_id
+    await trigger_end_night_phase(context, chat_id)
+
+async def trigger_end_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Processes night actions, announces casualties with role summary, and moves to Day Voting."""
     game = await get_game(chat_id)
     if not game or game["state"] != "NIGHT":
         return
@@ -462,15 +466,19 @@ async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 
     if context.job_queue:
         context.job_queue.run_once(
-            callback=end_day_voting_phase,
+            callback=end_day_voting_phase_job,
             when=DAY_VOTE_TIME,
             chat_id=chat_id,
             name=f"day_vote_{chat_id}"
         )
 
-async def end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE):
-    """Tallies Day votes and handles lynching."""
+async def end_day_voting_phase_job(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue wrapper for ending day vote phase when timer expires."""
     chat_id = context.job.chat_id
+    await trigger_end_day_voting_phase(context, chat_id)
+
+async def trigger_end_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Tallies Day votes and handles lynching."""
     game = await get_game(chat_id)
     if not game or game["state"] != "DAY_VOTE":
         return

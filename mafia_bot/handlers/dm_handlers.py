@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 from database import (
     get_game, get_players, set_player_role, log_night_action,
     record_day_vote, disable_last_word, get_user_profile,
-    buy_shop_item, consume_inventory_item
+    buy_shop_item, consume_inventory_item, get_night_actions
 )
 from game.roles import ROLES_INFO
 from game.shop import SHOP_ITEMS
@@ -274,7 +274,9 @@ async def callback_night_action(update: Update, context: ContextTypes.DEFAULT_TY
     player_map = {p["user_id"]: p for p in players}
 
     action_type = "UNKNOWN"
-    if role in ("GODFATHER", "MAFIA", "SERIAL_KILLER"):
+    if target_id == 0:
+        action_type = "SKIP"
+    elif role in ("GODFATHER", "MAFIA", "SERIAL_KILLER"):
         action_type = "KILL"
     elif role == "DOCTOR":
         action_type = "SAVE"
@@ -285,7 +287,7 @@ async def callback_night_action(update: Update, context: ContextTypes.DEFAULT_TY
 
     await log_night_action(chat_id, round_num, user.id, role, target_id, action_type)
 
-    if role == "DETECTIVE":
+    if role == "DETECTIVE" and target_id != 0:
         if target_id in player_map:
             target_player = player_map[target_id]
             target_role = target_player["role"]
@@ -301,10 +303,27 @@ async def callback_night_action(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Player: **{target_player['full_name']}**\n"
                 f"Result: **{alignment}**"
             )
-            return
+        else:
+            await query.edit_message_text("✅ Investigation skipped.")
+    else:
+        target_name = player_map[target_id]["full_name"] if target_id in player_map else "Nobody (Skipped)"
+        await query.edit_message_text(f"✅ Your night choice (**{target_name}**) has been recorded secretly.")
 
-    target_name = player_map[target_id]["full_name"] if target_id in player_map else "Nobody (Skipped)"
-    await query.edit_message_text(f"✅ Your night choice (**{target_name}**) has been recorded secretly.")
+    # Check if all active night roles have acted -> fast forward to Day!
+    active_night_players = [
+        p for p in players if ROLES_INFO.get(p["role"], {}).get("has_night_action")
+    ]
+    actions_logged = await get_night_actions(chat_id, round_num)
+    acted_uids = set(act["actor_id"] for act in actions_logged)
+
+    if len(acted_uids) >= len(active_night_players):
+        # All night action roles have acted/skipped! Cancel timer & end night immediately!
+        if context.job_queue:
+            jobs = context.job_queue.get_jobs_by_name(f"night_{chat_id}")
+            for j in jobs:
+                j.schedule_removal()
+        from handlers.group_handlers import trigger_end_night_phase
+        await trigger_end_night_phase(context, chat_id)
 
 async def callback_day_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -338,7 +357,6 @@ async def callback_day_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ Your secret vote for **{target_name}** has been recorded!{mayor_note}")
 
 async def handle_dm_last_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles text messages in DM from dead players to broadcast as Last Words."""
     user = update.effective_user
     text = update.message.text
 
@@ -359,7 +377,6 @@ async def handle_dm_last_word(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     for rec in dead_records:
         chat_id = rec["chat_id"]
-        # Format matching TrueMafia style screenshot:
         msg_text = f"🗣️ **Some citizen heard as {rec['full_name']} yelled before dying**:\n_\"{text}\"_"
         try:
             await context.bot.send_message(chat_id=chat_id, text=msg_text)
