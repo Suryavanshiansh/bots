@@ -50,7 +50,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
-        # Suppress HTTP access log spam
         pass
 
 def run_health_server():
@@ -64,6 +63,10 @@ async def post_init(application):
     await init_db()
     logger.info("Database initialized successfully.")
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors caused by updates."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
         print("❌ Error: Please specify a valid BOT_TOKEN in your .env file!")
@@ -73,13 +76,14 @@ def main():
     threading.Thread(target=run_health_server, daemon=True).start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    app.add_error_handler(global_error_handler)
 
-    # Command Handlers (Group & DM)
-    app.add_handler(CommandHandler(["game", "game_bot"], cmd_game))
-    app.add_handler(CommandHandler(["extend", "extend_bot"], cmd_extend))
-    app.add_handler(CommandHandler(["start", "start_bot"], cmd_start))
-    app.add_handler(CommandHandler(["stop", "stop_bot"], cmd_stop))
-    app.add_handler(CommandHandler(["status", "status_bot"], cmd_status))
+    # Command Handlers (Supports /command and /command@botname)
+    app.add_handler(CommandHandler(["game", "game_bot", "game_MafiaSyndicate_Bot"], cmd_game))
+    app.add_handler(CommandHandler(["extend", "extend_bot", "extend_MafiaSyndicate_Bot"], cmd_extend))
+    app.add_handler(CommandHandler(["start", "start_bot", "start_MafiaSyndicate_Bot"], cmd_start))
+    app.add_handler(CommandHandler(["stop", "stop_bot", "stop_MafiaSyndicate_Bot"], cmd_stop))
+    app.add_handler(CommandHandler(["status", "status_bot", "status_MafiaSyndicate_Bot"], cmd_status))
     app.add_handler(CommandHandler(["time", "timer"], cmd_time))
     app.add_handler(CommandHandler("profile", cmd_profile))
     app.add_handler(CommandHandler(["roles", "help"], cmd_roles_info))
