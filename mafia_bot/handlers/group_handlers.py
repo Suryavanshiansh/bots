@@ -254,8 +254,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_markdown(msg)
 
 async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Instantly assigns balanced roles and starts Night Phase 1 without getting stuck!"""
+    """Sends role selection choice to Game Host via DM, or falls back to random assignment."""
+    game = await get_game(chat_id)
     players = await get_players(chat_id)
+    owner_id = game["owner_id"]
+
     if len(players) < 3:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -263,15 +266,43 @@ async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         )
         return
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"🎭 **GAME IS STARTING!** Assigning secret roles to {len(players)} players via DM..."
-    )
+    await set_game_state(chat_id, "ROLE_ASSIGNMENT", duration_sec=60)
 
-    await assign_random_roles_and_start(context, chat_id)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎲 Assign Random Roles", callback_data=f"roleopt_rand_{chat_id}")],
+        [InlineKeyboardButton("🎭 Custom Assign Roles", callback_data=f"roleopt_cust_{chat_id}")]
+    ])
+
+    sent_to_owner = False
+    try:
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=(
+                f"👑 **GAME HOST CONTROL PANEL** (Group: {chat_id})\n"
+                f"Total joined players: **{len(players)}**.\n\n"
+                f"How would you like to assign secret roles for this match?"
+            ),
+            reply_markup=keyboard
+        )
+        sent_to_owner = True
+    except Exception as e:
+        logger.warning(f"Could not DM owner {owner_id}: {e}")
+
+    if sent_to_owner:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🎭 **Game is starting!** Host has been sent a role selection panel in DM..."
+        )
+    else:
+        # Fallback if owner DM fails
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🎭 **GAME IS STARTING!** Assigning secret roles to {len(players)} players via DM..."
+        )
+        await assign_random_roles_and_start(context, chat_id)
 
 async def assign_random_roles_and_start(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Assigns random roles and starts Night Phase."""
+    """Assigns random roles to ALL players (including Host/Owner) and starts Night Phase."""
     players = await get_players(chat_id)
     balanced_roles = get_balanced_roles(len(players))
 

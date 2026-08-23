@@ -4,12 +4,26 @@ from database import get_game, get_night_actions, get_players
 from config import OWNER_ID
 
 async def cmd_gamelog(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command /gamelog in DM (Owner Only) to view secret night logs."""
+    """Command /gamelog (Owner Only in DM). Auto-deletes if typed in group chat."""
     chat = update.effective_chat
     user = update.effective_user
 
     if chat.type != "private":
-        await update.message.reply_text("🔒 `/gamelog` can ONLY be used in DM with the bot to protect game privacy!")
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text="🔒 `/gamelog` is a private host command. Please use `/gamelog <GROUP_CHAT_ID>` here in DM!"
+            )
+        except Exception:
+            pass
+        return
+
+    if user.id != OWNER_ID:
+        await update.message.reply_text("⛔ **ACCESS DENIED**: Only the Bot Owner can view secret game logs!")
         return
 
     if not context.args:
@@ -25,10 +39,6 @@ async def cmd_gamelog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = await get_game(group_chat_id)
     if not game:
         await update.message.reply_text("⚠️ No game found for that Group Chat ID.")
-        return
-
-    if user.id != OWNER_ID and user.id != game["owner_id"]:
-        await update.message.reply_text("⛔ **ACCESS DENIED**: Only the Bot Owner or Game Host can view secret game logs!")
         return
 
     players = await get_players(group_chat_id)
