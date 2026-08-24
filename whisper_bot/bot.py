@@ -141,27 +141,26 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def resolve_target_display_info(target_username: Optional[str], target_id: Optional[int]) -> tuple[str, str]:
     """
-    Resolves target to (html_link_display, plain_first_name).
-    Prioritizes First Name if known in database, otherwise returns @username or User ID.
+    Resolves target to (html_display, plain_name).
+    Uses clean bold text for recipient names to prevent group moderation bots (e.g. Rose) from deleting messages due to link tags.
     """
     if target_id:
         db_u = get_user_by_id(target_id)
         if db_u and db_u.get("first_name"):
             name = db_u["first_name"].strip()
-            return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
+            return f'<b>{name}</b>', name
         elif target_username:
             uname = target_username.lstrip("@")
             return f'@{uname}', f'@{uname}'
         else:
-            return f'<a href="tg://user?id={target_id}">User ID {target_id}</a>', f'User ID {target_id}'
+            return f'User ID {target_id}', f'User ID {target_id}'
 
     if target_username:
         clean_uname = target_username.lstrip("@")
         db_u = get_user_by_username(clean_uname)
         if db_u and db_u.get("first_name"):
             name = db_u["first_name"].strip()
-            uid = db_u["user_id"]
-            return f'<a href="tg://user?id={uid}"><b>{name}</b></a>', name
+            return f'<b>{name}</b>', name
         else:
             return f'@{clean_uname}', f'@{clean_uname}'
 
@@ -300,8 +299,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             t_disp, t_plain = resolve_target_display_info(t_user, t_id)
             if t_name:
                 t_plain = t_name.strip()
-                if t_id:
-                    t_disp = f'<a href="tg://user?id={t_id}"><b>{t_plain}</b></a>'
+                t_disp = f'<b>{t_plain}</b>'
 
             t_title = f"👤 Send to {t_plain}"
 
