@@ -29,7 +29,9 @@ API_HASH     = os.getenv("TELEGRAM_API_HASH", "")
 TARGET_GC_ID = int(os.getenv("GROUP_ID", "-1002714592126"))
 
 # Delay between sending words to target GC (seconds)
-SEND_DELAY   = float(os.getenv("WORD_DELAY", "0.5"))
+raw_delay = os.getenv("WORD_DELAY", "0.5").strip()
+clean_delay = re.sub(r"[^\d.]", "", raw_delay)
+SEND_DELAY = float(clean_delay) if clean_delay else 0.5
 
 # Optional: ID or title of your Personal GC (Leave None to use 'me' / Saved Messages, or set PERSONAL_GC_ID in .env)
 PERSONAL_GC  = os.getenv("PERSONAL_GC_ID", "me")
@@ -77,11 +79,13 @@ def extract_words(text: str) -> list[str]:
             
     return found_words
 
+_send_lock = asyncio.Lock()
+
 @client.on(events.NewMessage(chats=PERSONAL_GC))
 async def handle_personal_gc_message(event):
     """
     Fires whenever a message is forwarded/sent into your Personal GC (or Saved Messages).
-    Types and sends the word into the Target GC!
+    Queues words, waits for SEND_DELAY (with typing indicator), then posts to Target GC.
     """
     text = event.message.text or ""
     words = extract_words(text)
@@ -91,10 +95,17 @@ async def handle_personal_gc_message(event):
         
     target = await get_target_entity()
     
-    for word in words:
-        log.info(f"📤 Forwarding word '{word}' -> Target Group Chat ({TARGET_GC_ID})...")
-        await client.send_message(target, word)
-        await asyncio.sleep(SEND_DELAY)
+    async with _send_lock:
+        for word in words:
+            log.info(f"⏳ Waiting {SEND_DELAY}s before sending '{word}'...")
+            try:
+                async with client.action(target, "typing"):
+                    await asyncio.sleep(SEND_DELAY)
+            except Exception:
+                await asyncio.sleep(SEND_DELAY)
+
+            log.info(f"📤 Forwarding word '{word}' -> Target Group Chat ({TARGET_GC_ID})...")
+            await client.send_message(target, word)
 
 async def main():
     print()
