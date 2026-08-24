@@ -232,7 +232,7 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
     
     await msg.reply_text(
-        f"💤 <b>{safe_name}</b> is now AFK!\nReason: {reason_html}",
+        f"💤 <b>{safe_name}</b> Qt💋 is now AFK!\nReason: {reason_html}",
         parse_mode="HTML"
     )
 
@@ -274,7 +274,7 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             duration_str = format_afk_duration(elapsed)
             safe_name = html.escape(user.first_name or "User")
             await msg.reply_text(
-                f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
+                f" Welcome back,qt💋 <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
                 parse_mode="HTML"
             )
         except Exception as e:
