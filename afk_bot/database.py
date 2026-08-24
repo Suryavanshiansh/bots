@@ -22,6 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SQLITE_DB_PATH = os.path.join(BASE_DIR, "afk_bot.db")
 
 USE_POSTGRES = False
+AFK_CACHE = {}
 
 def check_postgres_connection():
     global USE_POSTGRES
@@ -46,22 +47,17 @@ def check_postgres_connection():
         return False
 
 def get_connection():
-    global USE_POSTGRES
     if USE_POSTGRES:
-        try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
-            conn.autocommit = True
-            return conn
-        except Exception as e:
-            print(f"[DB] ⚠️ PostgreSQL connection failed: {e}. Falling back to SQLite.")
-            USE_POSTGRES = False
-
-    conn = sqlite3.connect(SQLITE_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        conn.autocommit = True
+        return conn
+    else:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetchall: bool = False, commit: bool = True):
-    """Execute SQL query safely across PostgreSQL and SQLite with automatic fallback."""
+    """Execute SQL query safely across PostgreSQL and SQLite."""
     is_select = query.strip().upper().startswith("SELECT")
     
     if USE_POSTGRES:
@@ -77,7 +73,7 @@ def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetcha
                     return [dict(r) for r in res]
                 return cursor.rowcount
         except Exception as e:
-            print(f"[DB] ⚠️ Postgres query failed: {e}. Retrying with SQLite fallback...")
+            print(f"[DB] ⚠️ Postgres query failed: {e}")
 
     # SQLite execution
     sqlite_query = query.replace("%s", "?")
@@ -133,6 +129,16 @@ def init_db():
         )
     """)
 
+    # Load active AFK users into RAM cache
+    try:
+        rows = execute_query("SELECT * FROM afk_users", fetchall=True)
+        if rows:
+            for r in rows:
+                AFK_CACHE[int(r["user_id"])] = dict(r)
+            print(f"[DB] 🧠 Loaded {len(rows)} active AFK records into RAM cache!")
+    except Exception as e:
+        print(f"[DB] Warning loading AFK cache: {e}")
+
     print("[DB] ✅ AFK Database initialized successfully!")
 
 # --- Users Caching CRUD ---
@@ -162,6 +168,15 @@ def get_user_by_id(user_id: int):
 def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int = 0):
     now = datetime.utcnow().isoformat()
     uid = int(user_id)
+    afk_data = {
+        "user_id": uid,
+        "reason": reason,
+        "afk_since": now,
+        "reason_msg_id": int(reason_msg_id),
+        "chat_id": int(chat_id)
+    }
+    AFK_CACHE[uid] = afk_data
+    
     query = """
         INSERT INTO afk_users (user_id, reason, afk_since, reason_msg_id, chat_id)
         VALUES (%s, %s, %s, %s, %s)
@@ -171,29 +186,54 @@ def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int
             reason_msg_id = EXCLUDED.reason_msg_id,
             chat_id = EXCLUDED.chat_id
     """
-    execute_query(query, (uid, reason, now, int(reason_msg_id), int(chat_id)))
+    try:
+        execute_query(query, (uid, reason, now, int(reason_msg_id), int(chat_id)))
+    except Exception as e:
+        print(f"[DB] Could not persist AFK to DB: {e}")
 
 def remove_user_afk(user_id: int):
     uid = int(user_id)
-    afk_info = get_user_afk(uid)
+    afk_info = AFK_CACHE.pop(uid, None)
+    if not afk_info:
+        afk_info = get_user_afk(uid)
     if afk_info:
-        execute_query("DELETE FROM afk_users WHERE user_id = %s", (uid,))
+        try:
+            execute_query("DELETE FROM afk_users WHERE user_id = %s", (uid,))
+        except Exception as e:
+            print(f"[DB] Could not delete AFK from DB: {e}")
     return afk_info
 
 def get_user_afk(user_id: int):
-    return execute_query("SELECT * FROM afk_users WHERE user_id = %s", (int(user_id),), fetchone=True)
+    uid = int(user_id)
+    if uid in AFK_CACHE:
+        return AFK_CACHE[uid]
+    res = execute_query("SELECT * FROM afk_users WHERE user_id = %s", (uid,), fetchone=True)
+    if res:
+        AFK_CACHE[uid] = res
+    return res
 
 def get_afk_user_by_username(username: str):
     clean = username.lstrip("@").lower()
+    # Check RAM cache first
+    user_info = get_user_by_username(clean)
+    if user_info and int(user_info["user_id"]) in AFK_CACHE:
+        afk_data = dict(AFK_CACHE[int(user_info["user_id"])])
+        afk_data["first_name"] = user_info.get("first_name", "")
+        afk_data["username"] = user_info.get("username", "")
+        return afk_data
+    
     query = """
         SELECT a.*, u.first_name, u.username
         FROM afk_users a
         JOIN users u ON a.user_id = u.user_id
         WHERE LOWER(u.username) = %s
     """
-    return execute_query(query, (clean,), fetchone=True)
+    res = execute_query(query, (clean,), fetchone=True)
+    if res:
+        AFK_CACHE[int(res["user_id"])] = res
+    return res
 
 def get_bot_stats():
-    users = execute_query("SELECT COUNT(*) as cnt FROM users", fetchone=True)["cnt"]
-    afks = execute_query("SELECT COUNT(*) as cnt FROM afk_users", fetchone=True)["cnt"]
-    return {"cached_users": users, "active_afks": afks}
+    users = execute_query("SELECT COUNT(*) as cnt FROM users", fetchone=True)
+    cnt_users = users["cnt"] if users else len(AFK_CACHE)
+    return {"cached_users": cnt_users, "active_afks": len(AFK_CACHE)}
