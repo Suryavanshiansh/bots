@@ -142,7 +142,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def resolve_target_display_info(target_username: Optional[str], target_id: Optional[int]) -> tuple[str, str]:
     """
     Resolves target to (html_link_display, plain_first_name).
-    Always prioritizes First Name over @username or User ID.
+    Prioritizes First Name if known in database, otherwise returns @username or User ID.
     """
     if target_id:
         db_u = get_user_by_id(target_id)
@@ -150,22 +150,22 @@ def resolve_target_display_info(target_username: Optional[str], target_id: Optio
             name = db_u["first_name"].strip()
             return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
         elif target_username:
-            name = target_username.lstrip("@")
-            return f'<a href="tg://user?id={target_id}"><b>{name}</b></a>', name
+            uname = target_username.lstrip("@")
+            return f'@{uname}', f'@{uname}'
         else:
-            return f'<a href="tg://user?id={target_id}"><b>User</b></a>', "User"
+            return f'<a href="tg://user?id={target_id}">User ID {target_id}</a>', f'User ID {target_id}'
 
     if target_username:
-        db_u = get_user_by_username(target_username)
+        clean_uname = target_username.lstrip("@")
+        db_u = get_user_by_username(clean_uname)
         if db_u and db_u.get("first_name"):
             name = db_u["first_name"].strip()
             uid = db_u["user_id"]
             return f'<a href="tg://user?id={uid}"><b>{name}</b></a>', name
         else:
-            name = target_username.lstrip("@")
-            return f"<b>{name}</b>", name
+            return f'@{clean_uname}', f'@{clean_uname}'
 
-    return "<b>Anyone</b>", "Anyone"
+    return "Anyone", "Anyone"
 
 async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
