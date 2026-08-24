@@ -351,9 +351,11 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                 except Exception as e:
                     logger.error(f"Error notifying AFK reply for user {target_user.id}: {e}")
 
-    # Check Message Entities (@username or text_mention)
-    if msg.entities:
-        for entity in msg.entities:
+    # Check Message & Caption Entities (@username or text_mention)
+    entities = list(msg.entities or ()) + list(msg.caption_entities or ())
+    if entities:
+        full_text = msg.text or msg.caption or ""
+        for entity in entities:
             target_afk = None
             target_name = ""
             
@@ -365,12 +367,13 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                     if target_afk:
                         notified_user_ids.add(t_user.id)
                         
-            elif entity.type == "mention" and msg.text:
-                username_raw = msg.text[entity.offset:entity.offset + entity.length]
+            elif entity.type == "mention" and full_text:
+                username_raw = full_text[entity.offset:entity.offset + entity.length]
                 target_afk = get_afk_user_by_username(username_raw)
                 if target_afk and target_afk.get("user_id") != user.id and target_afk.get("user_id") not in notified_user_ids:
                     notified_user_ids.add(target_afk["user_id"])
                     target_name = html.escape(target_afk.get("first_name") or "User")
+
 
             if target_afk and target_name:
                 try:
