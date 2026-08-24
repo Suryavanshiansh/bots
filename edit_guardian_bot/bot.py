@@ -598,6 +598,18 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+from datetime import datetime, timezone
+
+def parse_afk_time(afk_since_str: str) -> datetime:
+    try:
+        clean_str = str(afk_since_str).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return datetime.utcnow()
+
 async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -605,26 +617,27 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Upsert sender into cached users table
-    upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
+    try:
+        upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
+    except Exception as e:
+        logger.error(f"Error upserting user in AFK handler: {e}")
 
     # 1. Check if sender was AFK (Welcome back!)
-    # Skip if command was /afk itself
-    if msg.text and msg.text.strip().startswith("/afk"):
-        return
-
-    afk_info = remove_user_afk(user.id)
-    if afk_info:
-        try:
-            afk_time = datetime.fromisoformat(afk_info["afk_since"])
-            elapsed = (datetime.utcnow() - afk_time).total_seconds()
-            duration_str = format_afk_duration(elapsed)
-            safe_name = html.escape(user.first_name or "User")
-            await msg.reply_text(
-                f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.error(f"Error restoring AFK user {user.id}: {e}")
+    # Skip if command starts with '/'
+    if not (msg.text and msg.text.strip().startswith("/")):
+        afk_info = remove_user_afk(user.id)
+        if afk_info:
+            try:
+                afk_time = parse_afk_time(afk_info["afk_since"])
+                elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
+                duration_str = format_afk_duration(elapsed)
+                safe_name = html.escape(user.first_name or "User")
+                await msg.reply_text(
+                    f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Error restoring AFK user {user.id}: {e}")
 
     # 2. Check if this message mentions or replies to an AFK user
     notified_user_ids = set()
@@ -637,8 +650,8 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             if target_afk:
                 notified_user_ids.add(target_user.id)
                 try:
-                    afk_time = datetime.fromisoformat(target_afk["afk_since"])
-                    elapsed = (datetime.utcnow() - afk_time).total_seconds()
+                    afk_time = parse_afk_time(target_afk["afk_since"])
+                    elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
                     duration_str = format_afk_duration(elapsed)
                     target_name = html.escape(target_user.first_name or "User")
                     safe_reason = html.escape(target_afk["reason"] or "Away")
@@ -664,24 +677,25 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                         notified_user_ids.add(t_user.id)
                         
             elif entity.type == "mention" and msg.text:
-                username = msg.text[entity.offset:entity.offset + entity.length]
-                target_afk = get_afk_user_by_username(username)
-                if target_afk and target_afk["user_id"] != user.id and target_afk["user_id"] not in notified_user_ids:
+                username_raw = msg.text[entity.offset:entity.offset + entity.length]
+                target_afk = get_afk_user_by_username(username_raw)
+                if target_afk and target_afk.get("user_id") != user.id and target_afk.get("user_id") not in notified_user_ids:
                     notified_user_ids.add(target_afk["user_id"])
                     target_name = html.escape(target_afk.get("first_name") or "User")
 
             if target_afk and target_name:
                 try:
-                    afk_time = datetime.utcnow() if "afk_since" not in target_afk else datetime.fromisoformat(target_afk["afk_since"])
-                    elapsed = (datetime.utcnow() - afk_time).total_seconds()
+                    afk_time = parse_afk_time(target_afk.get("afk_since", ""))
+                    elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
                     duration_str = format_afk_duration(elapsed)
-                    safe_reason = html.escape(target_afk["reason"] or "Away")
+                    safe_reason = html.escape(target_afk.get("reason") or "Away")
                     await msg.reply_text(
                         f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: <i>{safe_reason}</i>",
                         parse_mode="HTML"
                     )
                 except Exception as e:
                     logger.error(f"Error notifying AFK mention for user: {e}")
+
 
 # --- BOT OWNER EXCLUSIVE COMMANDS ---
 
