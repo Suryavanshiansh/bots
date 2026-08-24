@@ -47,39 +47,38 @@ def check_postgres_connection():
         return False
 
 def get_connection():
-    global USE_POSTGRES
     if USE_POSTGRES:
-        try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
-            conn.autocommit = True
-            return conn
-        except Exception as e:
-            print(f"[DB] ⚠️ PostgreSQL connection failed during query: {e}. Falling back to SQLite.")
-            USE_POSTGRES = False
-
-    conn = sqlite3.connect(SQLITE_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        conn.autocommit = True
+        return conn
+    else:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetchall: bool = False, commit: bool = True):
-    """Execute SQL query safely across PostgreSQL and SQLite with automatic fallback."""
+    """Execute SQL query safely across PostgreSQL and SQLite."""
     is_select = query.strip().upper().startswith("SELECT")
     
     if USE_POSTGRES:
-        try:
-            with get_connection() as conn:
-                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                cursor.execute(query, params)
-                if fetchone:
-                    res = cursor.fetchone()
-                    return dict(res) if res else None
-                if fetchall:
-                    res = cursor.fetchall()
-                    return [dict(r) for r in res]
-                return cursor.rowcount
-        except Exception as e:
-            print(f"[DB] ⚠️ Postgres query failed: {e}. Retrying with SQLite fallback...")
-            # Fallthrough to SQLite block below
+        for attempt in range(3):
+            try:
+                with get_connection() as conn:
+                    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                    cursor.execute(query, params)
+                    if fetchone:
+                        res = cursor.fetchone()
+                        return dict(res) if res else None
+                    if fetchall:
+                        res = cursor.fetchall()
+                        return [dict(r) for r in res]
+                    return cursor.rowcount
+            except Exception as e:
+                print(f"[DB] ⚠️ Postgres query attempt {attempt+1}/3 failed: {e}")
+                if attempt == 2:
+                    print(f"[DB] ❌ All 3 PostgreSQL attempts failed for query.")
+                    return None if (fetchone or fetchall) else 0
+        return None if (fetchone or fetchall) else 0
 
     # SQLite execution
     sqlite_query = query.replace("%s", "?")
