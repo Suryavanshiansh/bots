@@ -255,6 +255,10 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not user:
         return
 
+    # Skip processing if message is a command
+    if msg.text and msg.text.strip().startswith("/"):
+        return
+
     # Upsert sender into cached users table
     try:
         upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
@@ -262,21 +266,19 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Error upserting user: {e}")
 
     # 1. Check if sender was AFK (Welcome back!)
-    # Skip if command starts with '/'
-    if not (msg.text and msg.text.strip().startswith("/")):
-        afk_info = remove_user_afk(user.id)
-        if afk_info:
-            try:
-                afk_time = parse_afk_time(afk_info["afk_since"])
-                elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
-                duration_str = format_afk_duration(elapsed)
-                safe_name = html.escape(user.first_name or "User")
-                await msg.reply_text(
-                    f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.error(f"Error restoring AFK user {user.id}: {e}")
+    afk_info = remove_user_afk(user.id)
+    if afk_info:
+        try:
+            afk_time = parse_afk_time(afk_info["afk_since"])
+            elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
+            duration_str = format_afk_duration(elapsed)
+            safe_name = html.escape(user.first_name or "User")
+            await msg.reply_text(
+                f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Error restoring AFK user {user.id}: {e}")
 
     # 2. Check if this message mentions or replies to an AFK user
     notified_user_ids = set()
@@ -368,14 +370,14 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_error_handler(global_error_handler)
 
-    # Register Command Handlers
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler(["afk"], afk_command))
-    app.add_handler(CommandHandler("stats", stats_command))
+    # Register Command Handlers (Group 0)
+    app.add_handler(CommandHandler("start", start_command), group=0)
+    app.add_handler(CommandHandler("help", help_command), group=0)
+    app.add_handler(CommandHandler(["afk"], afk_command), group=0)
+    app.add_handler(CommandHandler("stats", stats_command), group=0)
 
-    # Register AFK Return & Mention Listener (Group 0 - runs first for all updates)
-    app.add_handler(MessageHandler(~filters.StatusUpdate.ALL, handle_afk_messages), group=0)
+    # Register AFK Return & Mention Listener (Group 1 - runs after commands)
+    app.add_handler(MessageHandler(~filters.StatusUpdate.ALL, handle_afk_messages), group=1)
 
     print("🚀 Standalone AFK Bot is running...")
     app.run_polling()
