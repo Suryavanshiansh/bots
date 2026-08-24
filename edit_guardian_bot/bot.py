@@ -90,8 +90,17 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Edit Guardian Bot is running!")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+
+    def do_POST(self):
+        self.do_GET()
+
     def log_message(self, format, *args):
         return
+
 
 def start_health_server():
     port = int(os.getenv("PORT", 8080))
