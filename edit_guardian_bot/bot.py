@@ -970,6 +970,9 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
 
+    # Register AFK Return & Mention Listener (Group 0 - runs first for all updates)
+    app.add_handler(MessageHandler(~filters.StatusUpdate.ALL, handle_afk_messages), group=0)
+
     # Register Edited Message Listener (Group 1)
     app.add_handler(TypeHandler(Update, handle_edited_message_update), group=1)
 
@@ -980,11 +983,9 @@ def main():
     )
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & media_filter, handle_media_and_stickers), group=2)
 
-    # Register AFK Return & Mention Listener (Group 3)
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, handle_afk_messages), group=3)
-
     print("🚀 Edit Guardian Bot is running...")
     app.run_polling()
+
 
 
 if __name__ == "__main__":

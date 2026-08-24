@@ -310,6 +310,7 @@ def get_approved_sticker_users(chat_id: int):
 
 def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int = 0):
     now = datetime.utcnow().isoformat()
+    uid = int(user_id)
     query = """
         INSERT INTO afk_users (user_id, reason, afk_since, reason_msg_id, chat_id)
         VALUES (%s, %s, %s, %s, %s)
@@ -319,16 +320,18 @@ def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int
             reason_msg_id = EXCLUDED.reason_msg_id,
             chat_id = EXCLUDED.chat_id
     """
-    execute_query(query, (user_id, reason, now, reason_msg_id, chat_id))
+    execute_query(query, (uid, reason, now, int(reason_msg_id), int(chat_id)))
 
 def remove_user_afk(user_id: int):
-    afk_info = get_user_afk(user_id)
+    uid = int(user_id)
+    afk_info = get_user_afk(uid)
     if afk_info:
-        execute_query("DELETE FROM afk_users WHERE user_id = %s", (user_id,))
+        execute_query("DELETE FROM afk_users WHERE user_id = %s", (uid,))
     return afk_info
 
 def get_user_afk(user_id: int):
-    return execute_query("SELECT * FROM afk_users WHERE user_id = %s", (user_id,), fetchone=True)
+    return execute_query("SELECT * FROM afk_users WHERE user_id = %s", (int(user_id),), fetchone=True)
+
 
 def get_afk_user_by_username(username: str):
     clean = username.lstrip("@").lower()
