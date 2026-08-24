@@ -2,15 +2,8 @@ import os
 import sqlite3
 from datetime import datetime
 
-RAW_DB_URL = os.getenv("DATABASE_URL", "").strip()
-
-# Normalize postgres:// to postgresql:// for psycopg2 compatibility
-if RAW_DB_URL.startswith("postgres://"):
-    DATABASE_URL = RAW_DB_URL.replace("postgres://", "postgresql://", 1)
-else:
-    DATABASE_URL = RAW_DB_URL
-
 # Check if psycopg2 is available
+
 try:
     import psycopg2
     import psycopg2.extras
@@ -24,11 +17,19 @@ SQLITE_DB_PATH = os.path.join(BASE_DIR, "guardian.db")
 # Flag to track whether active database mode is PostgreSQL
 USE_POSTGRES = False
 
+def get_db_url() -> str:
+    raw_url = os.getenv("DATABASE_URL", "").strip()
+    if raw_url.startswith("postgres://"):
+        return raw_url.replace("postgres://", "postgresql://", 1)
+    return raw_url
+
+
 def check_postgres_connection():
     global USE_POSTGRES
-    if DATABASE_URL and PSYCOPG2_AVAILABLE and "YOUR-PASSWORD" not in DATABASE_URL:
+    db_url = get_db_url()
+    if db_url and PSYCOPG2_AVAILABLE and "YOUR-PASSWORD" not in db_url:
         try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+            conn = psycopg2.connect(db_url, connect_timeout=10)
             conn.close()
             USE_POSTGRES = True
             print("[DB] ✅ Successfully connected to PostgreSQL (Supabase)!")
@@ -39,7 +40,7 @@ def check_postgres_connection():
             USE_POSTGRES = False
             return False
     else:
-        if DATABASE_URL and "YOUR-PASSWORD" in DATABASE_URL:
+        if db_url and "YOUR-PASSWORD" in db_url:
             print("[DB] ⚠️ DATABASE_URL contains placeholder '[YOUR-PASSWORD]'. Using local SQLite.")
         else:
             print("[DB] ℹ️ DATABASE_URL not set. Using local SQLite.")
@@ -48,7 +49,8 @@ def check_postgres_connection():
 
 def get_connection():
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        db_url = get_db_url()
+        conn = psycopg2.connect(db_url, connect_timeout=10)
         conn.autocommit = True
         return conn
     else:
