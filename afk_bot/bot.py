@@ -305,7 +305,7 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
 
                     await msg.reply_text(
-                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
+                        f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
                         parse_mode="HTML"
                     )
                 except Exception as e:
