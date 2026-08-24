@@ -142,7 +142,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def resolve_target_display_info(target_username: Optional[str], target_id: Optional[int]) -> tuple[str, str]:
     """
     Resolves target to (html_display, plain_name).
-    Uses clean bold text for recipient names to prevent group moderation bots (e.g. Rose) from deleting messages due to link tags.
+    Uses clean bold text for recipient names without @ symbols to prevent Rose Bot mention filters from deleting messages.
     """
     if target_id:
         db_u = get_user_by_id(target_id)
@@ -151,7 +151,7 @@ def resolve_target_display_info(target_username: Optional[str], target_id: Optio
             return f'<b>{name}</b>', name
         elif target_username:
             uname = target_username.lstrip("@")
-            return f'@{uname}', f'@{uname}'
+            return f'<b>{uname}</b>', uname
         else:
             return f'User ID {target_id}', f'User ID {target_id}'
 
@@ -162,7 +162,7 @@ def resolve_target_display_info(target_username: Optional[str], target_id: Optio
             name = db_u["first_name"].strip()
             return f'<b>{name}</b>', name
         else:
-            return f'@{clean_uname}', f'@{clean_uname}'
+            return f'<b>{clean_uname}</b>', clean_uname
 
     return "Anyone", "Anyone"
 
