@@ -23,11 +23,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from dotenv import load_dotenv
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -255,9 +251,12 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as html_err:
             logger.warning(f"HTML reply failed ({html_err}), using fallback plain text")
-            await msg.reply_text(
-                f"💤 {user.first_name} Qt💋 is now AFK!\nReason: {reason}"
-            )
+            try:
+                await msg.reply_text(
+                    f"💤 {user.first_name} Qt💋 is now AFK!\nReason: {reason}"
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Error in afk_command: {e}", exc_info=e)
 
@@ -305,13 +304,16 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             safe_name = html.escape(user.first_name or "User")
             try:
                 await msg.reply_text(
-                    f"👋 Welcome back,Qt💋<b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
+                    f"👋 Welcome back,Qt💋 <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
                     parse_mode="HTML"
                 )
             except Exception:
-                await msg.reply_text(
-                    f"👋 Welcome back,Qt💋 {user.first_name}! You were away for {duration_str}."
-                )
+                try:
+                    await msg.reply_text(
+                        f"👋 Welcome back,Qt💋 {user.first_name}! You were away for {duration_str}."
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error restoring AFK user {user.id}: {e}")
 
@@ -345,9 +347,12 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             parse_mode="HTML"
                         )
                     except Exception:
-                        await msg.reply_text(
-                            f"💤 {target_user.first_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
-                        )
+                        try:
+                            await msg.reply_text(
+                                f"💤 {target_user.first_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
+                            )
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.error(f"Error notifying AFK reply for user {target_user.id}: {e}")
 
@@ -374,7 +379,6 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                     notified_user_ids.add(target_afk["user_id"])
                     target_name = html.escape(target_afk.get("first_name") or "User")
 
-
             if target_afk and target_name:
                 try:
                     afk_time = parse_afk_time(target_afk.get("afk_since", ""))
@@ -395,9 +399,12 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             parse_mode="HTML"
                         )
                     except Exception:
-                        await msg.reply_text(
-                            f"💤 {target_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
-                        )
+                        try:
+                            await msg.reply_text(
+                                f"💤 {target_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
+                            )
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.error(f"Error notifying AFK mention for user: {e}")
 
