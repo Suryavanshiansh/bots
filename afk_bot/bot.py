@@ -153,6 +153,43 @@ def parse_afk_time(afk_since_str: str) -> datetime:
     except Exception:
         return datetime.utcnow()
 
+async def send_safe_reply(update: Update, text: str, html_text: str = None):
+    """4-tier failproof reply helper that guarantees message delivery even if original message was deleted."""
+    chat = update.effective_chat
+    msg = update.effective_message
+    if not chat:
+        return
+    
+    formatted_html = html_text or text
+    
+    # Tier 1: Reply to message with HTML
+    if msg:
+        try:
+            await msg.reply_text(formatted_html, parse_mode="HTML", disable_web_page_preview=True)
+            return
+        except Exception:
+            pass
+        
+        # Tier 2: Reply to message plain text
+        try:
+            await msg.reply_text(text, parse_mode=None)
+            return
+        except Exception:
+            pass
+            
+    # Tier 3: Direct send to chat with HTML (if reply fails or msg deleted)
+    try:
+        await chat.send_message(formatted_html, parse_mode="HTML", disable_web_page_preview=True)
+        return
+    except Exception:
+        pass
+        
+    # Tier 4: Direct send to chat plain text
+    try:
+        await chat.send_message(text, parse_mode=None)
+    except Exception as e:
+        logger.error(f"Failed all reply tiers: {e}")
+
 # --- COMMAND HANDLERS ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,7 +200,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
     
-    msg = (
+    html_msg = (
         "💤 <b>Welcome to AFK Bot!</b>\n\n"
         "I help group members notify others when they are Away From Keyboard.\n\n"
         "<b>📌 How to use:</b>\n"
@@ -172,17 +209,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• When someone tags or replies to you, I'll tell them you're AFK.\n"
         "• As soon as you type any message, I'll welcome you back!"
     )
-    await update.effective_message.reply_text(msg, parse_mode="HTML")
+    plain_msg = (
+        "💤 Welcome to AFK Bot!\n\n"
+        "How to use:\n"
+        "• Type /afk [reason] to go AFK.\n"
+        "• Or reply to a message/sticker with /afk!\n"
+        "• When someone tags or replies to you, I'll tell them you're AFK.\n"
+        "• As soon as you type any message, I'll welcome you back!"
+    )
+    await send_safe_reply(update, plain_msg, html_msg)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
+    html_msg = (
         "📖 <b>AFK Bot Command Guide:</b>\n\n"
         "• <code>/afk [reason]</code> — Set your AFK status\n"
         "• <code>/afk</code> (replying to a sticker/text) — Set replied item as reason\n"
         "• <code>/start</code> — Start the bot\n"
         "• <code>/help</code> — Show this help message"
     )
-    await update.effective_message.reply_text(msg, parse_mode="HTML")
+    plain_msg = (
+        "📖 AFK Bot Command Guide:\n\n"
+        "• /afk [reason] — Set your AFK status\n"
+        "• /afk (replying to sticker/text) — Set replied item as reason\n"
+        "• /start — Start the bot\n"
+        "• /help — Show this help message"
+    )
+    await send_safe_reply(update, plain_msg, html_msg)
 
 async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -246,19 +298,10 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if link:
                 reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
         
-        try:
-            await msg.reply_text(
-                f"💤 <b>{safe_name}</b> Qt💋 is now AFK!\nReason: {reason_html}",
-                parse_mode="HTML"
-            )
-        except Exception as html_err:
-            logger.warning(f"HTML reply failed ({html_err}), using fallback plain text")
-            try:
-                await msg.reply_text(
-                    f"💤 {user.first_name} Qt💋 is now AFK!\nReason: {reason}"
-                )
-            except Exception:
-                pass
+        html_response = f"💤 <b>{safe_name}</b> Qt💋 is now AFK!\nReason: {reason_html}"
+        plain_response = f"💤 {user.first_name} Qt💋 is now AFK!\nReason: {reason}"
+        
+        await send_safe_reply(update, plain_response, html_response)
     except Exception as e:
         logger.error(f"Error in afk_command: {e}", exc_info=e)
 
@@ -303,18 +346,10 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                 elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
                 duration_str = format_afk_duration(elapsed)
                 safe_name = html.escape(user.first_name or "User")
-                try:
-                    await msg.reply_text(
-                        f"👋 Welcome back,Qt💋 <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    try:
-                        await msg.reply_text(
-                            f"👋 Welcome back,Qt💋 {user.first_name}! You were away for {duration_str}."
-                        )
-                    except Exception:
-                        pass
+                
+                html_res = f"👋 Welcome back,Qt💋 <b>{safe_name}</b>! You were away for <b>{duration_str}</b>."
+                plain_res = f"👋 Welcome back,Qt💋 {user.first_name}! You were away for {duration_str}."
+                await send_safe_reply(update, plain_res, html_res)
             except Exception as e:
                 logger.error(f"Error restoring AFK user {user.id}: {e}")
     except Exception as e:
@@ -345,18 +380,9 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             if link:
                                 reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
 
-                        try:
-                            await msg.reply_text(
-                                f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
-                                parse_mode="HTML"
-                            )
-                        except Exception:
-                            try:
-                                await msg.reply_text(
-                                    f"💤 {target_user.first_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
-                                )
-                            except Exception:
-                                pass
+                        html_res = f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}"
+                        plain_res = f"💤 {target_user.first_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
+                        await send_safe_reply(update, plain_res, html_res)
                     except Exception as e:
                         logger.error(f"Error notifying AFK reply for user {target_user.id}: {e}")
             except Exception as e:
@@ -400,18 +426,9 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             if link:
                                 reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
 
-                        try:
-                            await msg.reply_text(
-                                f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
-                                parse_mode="HTML"
-                            )
-                        except Exception:
-                            try:
-                                await msg.reply_text(
-                                    f"💤 {target_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
-                                )
-                            except Exception:
-                                pass
+                        html_res = f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}"
+                        plain_res = f"💤 {target_name} Qt💋 is currently AFK! (Away for {duration_str})\nReason: {target_afk.get('reason', 'Away')}"
+                        await send_safe_reply(update, plain_res, html_res)
                     except Exception as e:
                         logger.error(f"Error notifying AFK mention for user: {e}")
             except Exception as e:
