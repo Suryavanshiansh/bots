@@ -222,7 +222,13 @@ bot.on('text', async (ctx) => {
 
       if (advanced) {
         const solutionText = formatSolution(session, wordNum);
-        return ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
+        await ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
+        // Also send the updated word as a standalone forwardable message
+        const updatedCand = session.results[itemIndex]?.candidates[session.selectedIndices[itemIndex]];
+        if (updatedCand) {
+          await ctx.reply(`🔄 New word #${wordNum}: ${updatedCand.word}`);
+        }
+        return;
       } else {
         return ctx.reply(`⚠️ No alternative word options found for Word #${wordNum}.`);
       }
@@ -261,7 +267,7 @@ bot.on('text', async (ctx) => {
   ctx.reply('Forward me a word challenge message (with clues like `B--- (4)`) or send an image of the grid!');
 });
 
-function runSolverAndReply(ctx, session) {
+async function runSolverAndReply(ctx, session) {
   if (!dictionary || dictionary.size === 0) {
     return ctx.reply('⏳ Dictionary is still loading, please try again in a few seconds...');
   }
@@ -270,8 +276,27 @@ function runSolverAndReply(ctx, session) {
   session.selectedIndices = assignUniqueCandidates(session.results);
   saveSessionsToDisk();
 
+  // 1. Send full solution summary
   const solutionText = formatSolution(session);
-  ctx.replyWithMarkdown(solutionText);
+  await ctx.replyWithMarkdown(solutionText);
+
+  // 2. Send each word as a separate forwardable message
+  const wordMessages = [];
+  session.results.forEach((res, i) => {
+    const selectedIdx = session.selectedIndices[i] || 0;
+    const cand = res.candidates[selectedIdx];
+    if (cand) {
+      wordMessages.push(cand.word);
+    }
+  });
+
+  if (wordMessages.length > 0) {
+    await ctx.reply('📤 *Words to forward one by one:*', { parse_mode: 'Markdown' });
+    for (const word of wordMessages) {
+      await ctx.reply(word);
+      await new Promise(r => setTimeout(r, 100)); // small delay to preserve order
+    }
+  }
 }
 
 async function main() {
