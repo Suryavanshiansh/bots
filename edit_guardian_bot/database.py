@@ -155,28 +155,7 @@ def init_db():
         )
     """)
 
-    # AFK users table
-    execute_query("""
-        CREATE TABLE IF NOT EXISTS afk_users (
-            user_id BIGINT PRIMARY KEY,
-            reason TEXT,
-            afk_since TEXT,
-            reason_msg_id BIGINT DEFAULT 0,
-            chat_id BIGINT DEFAULT 0
-        )
-    """)
-
-    # Migrate columns if afk_users existed without reason_msg_id
-    try:
-        execute_query("ALTER TABLE afk_users ADD COLUMN reason_msg_id BIGINT DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        execute_query("ALTER TABLE afk_users ADD COLUMN chat_id BIGINT DEFAULT 0")
-    except Exception:
-        pass
-
-    print("[DB] ✅ Database initialized successfully!")
+    print("[DB] ✅ Edit Guardian Database initialized successfully!")
 
 # --- Users Caching CRUD ---
 
@@ -306,43 +285,6 @@ def get_approved_sticker_users(chat_id: int):
     rows = execute_query("SELECT user_id FROM approved_sticker_users WHERE chat_id = %s", (chat_id,), fetchall=True)
     return [r["user_id"] for r in rows]
 
-# --- AFK Users CRUD ---
-
-def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int = 0):
-    now = datetime.utcnow().isoformat()
-    uid = int(user_id)
-    query = """
-        INSERT INTO afk_users (user_id, reason, afk_since, reason_msg_id, chat_id)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT(user_id) DO UPDATE SET
-            reason = EXCLUDED.reason,
-            afk_since = EXCLUDED.afk_since,
-            reason_msg_id = EXCLUDED.reason_msg_id,
-            chat_id = EXCLUDED.chat_id
-    """
-    execute_query(query, (uid, reason, now, int(reason_msg_id), int(chat_id)))
-
-def remove_user_afk(user_id: int):
-    uid = int(user_id)
-    afk_info = get_user_afk(uid)
-    if afk_info:
-        execute_query("DELETE FROM afk_users WHERE user_id = %s", (uid,))
-    return afk_info
-
-def get_user_afk(user_id: int):
-    return execute_query("SELECT * FROM afk_users WHERE user_id = %s", (int(user_id),), fetchone=True)
-
-
-def get_afk_user_by_username(username: str):
-    clean = username.lstrip("@").lower()
-    query = """
-        SELECT a.*, u.first_name, u.username
-        FROM afk_users a
-        JOIN users u ON a.user_id = u.user_id
-        WHERE LOWER(u.username) = %s
-    """
-    return execute_query(query, (clean,), fetchone=True)
-
 # --- Bot Owner Stats & Global Data ---
 
 def get_bot_stats():
@@ -350,13 +292,11 @@ def get_bot_stats():
     edits = execute_query("SELECT COUNT(*) as cnt FROM approved_edit_users", fetchone=True)["cnt"]
     stickers = execute_query("SELECT COUNT(*) as cnt FROM approved_sticker_users", fetchone=True)["cnt"]
     users = execute_query("SELECT COUNT(*) as cnt FROM users", fetchone=True)["cnt"]
-    afks = execute_query("SELECT COUNT(*) as cnt FROM afk_users", fetchone=True)["cnt"]
     return {
         "chats": chats,
         "approved_edits": edits,
         "approved_sticker_users": stickers,
-        "cached_users": users,
-        "afk_users": afks
+        "cached_users": users
     }
 
 def get_all_chat_ids():

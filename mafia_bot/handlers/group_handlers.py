@@ -266,7 +266,6 @@ async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         )
         return
 
-    # Strictly check if host_id is the Bot Owner (OWNER_ID)
     if host_id == OWNER_ID or any(p["user_id"] == OWNER_ID for p in players):
         await set_game_state(chat_id, "ROLE_ASSIGNMENT", duration_sec=60)
         keyboard = InlineKeyboardMarkup([
@@ -291,7 +290,6 @@ async def start_game_sequence(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         except Exception as e:
             logger.warning(f"Could not DM Owner {OWNER_ID}: {e}")
 
-    # For all normal hosts / non-owners: Auto-assign random roles immediately
     await context.bot.send_message(
         chat_id=chat_id,
         text=f"🎭 **GAME IS STARTING!** Assigning secret roles to {len(players)} players via DM..."
@@ -328,13 +326,21 @@ async def start_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ro
     players = await get_players(chat_id, alive_only=True)
     roles_present = set(p["role"] for p in players)
 
+    bot_username = context.bot.username
+    bot_dm_url = f"https://t.me/{bot_username}"
+
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Click Here to Go to Bot DM for Action", url=bot_dm_url)]
+    ])
+
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
             f"🌙 **NIGHT {round_num} HAS FALLEN...** 🌙\n\n"
             f"The city sleeps as darkness settles over the streets...\n"
             f"⏱️ **Night Duration**: {NIGHT_TIME} seconds"
-        )
+        ),
+        reply_markup=reply_markup
     )
 
     if "GODFATHER" in roles_present:
@@ -469,7 +475,7 @@ async def trigger_end_night_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         await start_day_voting_phase(context, chat_id, round_num)
     except Exception as e:
         logger.error(f"Error in trigger_end_night_phase: {e}\n{traceback.format_exc()}")
-        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Game Engine Error: {e}. Moving to Day voting...")
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Moving to Day voting...")
         await start_day_voting_phase(context, chat_id, round_num if 'round_num' in locals() else 1)
 
 async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
@@ -478,13 +484,21 @@ async def start_day_voting_phase(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         await set_game_state(chat_id, "DAY_VOTE", phase_round=round_num, duration_sec=DAY_VOTE_TIME)
         players = await get_players(chat_id, alive_only=True)
 
+        bot_username = context.bot.username
+        bot_dm_url = f"https://t.me/{bot_username}"
+
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💬 Click Here to Go to Bot DM & Vote", url=bot_dm_url)]
+        ])
+
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
                 f"🗳️ **DAY {round_num} LYNCH VOTING IS NOW OPEN!** 🗳️\n\n"
-                f"All alive players: Check your DMs from the bot to cast your secret vote!\n"
+                f"All alive players: Click the button below to go to Bot DM and cast your secret vote!\n"
                 f"⏱️ **Voting Time**: {DAY_VOTE_TIME} seconds"
-            )
+            ),
+            reply_markup=reply_markup
         )
 
         for p in players:

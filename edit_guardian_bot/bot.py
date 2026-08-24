@@ -55,12 +55,9 @@ from database import (
     get_user_by_username,
     get_user_by_id,
     get_bot_stats,
-    get_all_chat_ids,
-    set_user_afk,
-    remove_user_afk,
-    get_user_afk,
-    get_afk_user_by_username
+    get_all_chat_ids
 )
+
 
 
 # Load environment variables
@@ -520,217 +517,7 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
         await msg.reply_text("⚠️ Unable to fetch approved members at this moment. Please try again.")
 
 
-# --- AFK FEATURE LOGIC ---
 
-def format_afk_duration(seconds: float) -> str:
-    seconds = int(seconds)
-    if seconds < 5:
-        return "a few seconds"
-    if seconds < 60:
-        return f"{seconds} second{'s' if seconds != 1 else ''}"
-    
-    minutes = seconds // 60
-    hours = minutes // 60
-    days = hours // 24
-    
-    rem_hours = hours % 24
-    rem_minutes = minutes % 60
-    rem_seconds = seconds % 60
-    
-    parts = []
-    if days > 0:
-        parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if rem_hours > 0:
-        parts.append(f"{rem_hours} hour{'s' if rem_hours != 1 else ''}")
-    if rem_minutes > 0:
-        parts.append(f"{rem_minutes} minute{'s' if rem_minutes != 1 else ''}")
-    if rem_seconds > 0 and days == 0 and rem_hours == 0:
-        parts.append(f"{rem_seconds} second{'s' if rem_seconds != 1 else ''}")
-        
-    return ", ".join(parts) if parts else "a moment"
-
-def get_message_link(chat, message_id: int) -> str:
-    if not message_id or not chat:
-        return ""
-    if getattr(chat, 'username', None):
-        return f"https://t.me/{chat.username}/{message_id}"
-    cid_str = str(chat.id)
-    if cid_str.startswith("-100"):
-        cid = cid_str[4:]
-        return f"https://t.me/c/{cid}/{message_id}"
-    return ""
-
-async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    user = update.effective_user
-    if not msg or not user:
-        return
-
-    reason = " ".join(context.args).strip() if context.args else ""
-    reason_msg_id = 0
-    
-    # If no reason typed, check if user replied to a message or sticker
-    if msg.reply_to_message:
-        reply_msg = msg.reply_to_message
-        reason_msg_id = reply_msg.message_id
-        if not reason:
-            if reply_msg.text:
-                reason = reply_msg.text.strip()
-            elif reply_msg.caption:
-                reason = reply_msg.caption.strip()
-            elif reply_msg.sticker:
-                emoji = reply_msg.sticker.emoji or ""
-                reason = f"[Sticker {emoji}]".strip()
-            elif reply_msg.photo:
-                reason = "[Photo]"
-            elif reply_msg.video:
-                reason = "[Video]"
-            elif reply_msg.animation:
-                reason = "[GIF]"
-            elif reply_msg.voice or reply_msg.audio:
-                reason = "[Audio]"
-            elif reply_msg.document:
-                doc_name = reply_msg.document.file_name or ""
-                reason = f"[Document] {doc_name}".strip()
-            
-    if not reason:
-        reason = "Away"
-
-    # Truncate reason if too long (max 200 chars)
-    if len(reason) > 200:
-        reason = reason[:197] + "..."
-
-    upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
-    set_user_afk(user.id, reason, reason_msg_id, update.effective_chat.id)
-
-    safe_name = html.escape(user.first_name or "User")
-    safe_reason = html.escape(reason)
-    
-    reason_html = f"<i>{safe_reason}</i>"
-    if reason_msg_id:
-        link = get_message_link(update.effective_chat, reason_msg_id)
-        if link:
-            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
-    
-    await msg.reply_text(
-        f"💤 <b>{safe_name}</b> is now AFK!\nReason: {reason_html}",
-        parse_mode="HTML"
-    )
-
-
-from datetime import datetime, timezone
-
-def parse_afk_time(afk_since_str: str) -> datetime:
-    try:
-        clean_str = str(afk_since_str).replace("Z", "+00:00")
-        dt = datetime.fromisoformat(clean_str)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-    except Exception:
-        return datetime.utcnow()
-
-async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    user = update.effective_user
-    if not msg or not user:
-        return
-
-    # Upsert sender into cached users table
-    try:
-        upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
-    except Exception as e:
-        logger.error(f"Error upserting user in AFK handler: {e}")
-
-    # 1. Check if sender was AFK (Welcome back!)
-    # Skip if command starts with '/'
-    if not (msg.text and msg.text.strip().startswith("/")):
-        afk_info = remove_user_afk(user.id)
-        if afk_info:
-            try:
-                afk_time = parse_afk_time(afk_info["afk_since"])
-                elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
-                duration_str = format_afk_duration(elapsed)
-                safe_name = html.escape(user.first_name or "User")
-                await msg.reply_text(
-                    f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.error(f"Error restoring AFK user {user.id}: {e}")
-
-    # 2. Check if this message mentions or replies to an AFK user
-    notified_user_ids = set()
-
-    # Check Reply-to message
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        target_user = msg.reply_to_message.from_user
-        if target_user.id != user.id:
-            target_afk = get_user_afk(target_user.id)
-            if target_afk:
-                notified_user_ids.add(target_user.id)
-                try:
-                    afk_time = parse_afk_time(target_afk["afk_since"])
-                    elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
-                    duration_str = format_afk_duration(elapsed)
-                    target_name = html.escape(target_user.first_name or "User")
-                    safe_reason = html.escape(target_afk["reason"] or "Away")
-                    
-                    reason_html = f"<i>{safe_reason}</i>"
-                    r_msg_id = target_afk.get("reason_msg_id") or 0
-                    if r_msg_id:
-                        link = get_message_link(update.effective_chat, r_msg_id)
-                        if link:
-                            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
-
-                    await msg.reply_text(
-                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.error(f"Error notifying AFK reply for user {target_user.id}: {e}")
-
-    # Check Message Entities (@username or text_mention)
-    if msg.entities:
-        for entity in msg.entities:
-            target_afk = None
-            target_name = ""
-            
-            if entity.type == "text_mention" and entity.user:
-                t_user = entity.user
-                if t_user.id != user.id and t_user.id not in notified_user_ids:
-                    target_afk = get_user_afk(t_user.id)
-                    target_name = html.escape(t_user.first_name or "User")
-                    if target_afk:
-                        notified_user_ids.add(t_user.id)
-                        
-            elif entity.type == "mention" and msg.text:
-                username_raw = msg.text[entity.offset:entity.offset + entity.length]
-                target_afk = get_afk_user_by_username(username_raw)
-                if target_afk and target_afk.get("user_id") != user.id and target_afk.get("user_id") not in notified_user_ids:
-                    notified_user_ids.add(target_afk["user_id"])
-                    target_name = html.escape(target_afk.get("first_name") or "User")
-
-            if target_afk and target_name:
-                try:
-                    afk_time = parse_afk_time(target_afk.get("afk_since", ""))
-                    elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
-                    duration_str = format_afk_duration(elapsed)
-                    safe_reason = html.escape(target_afk.get("reason") or "Away")
-                    
-                    reason_html = f"<i>{safe_reason}</i>"
-                    r_msg_id = target_afk.get("reason_msg_id") or 0
-                    if r_msg_id:
-                        link = get_message_link(update.effective_chat, r_msg_id)
-                        if link:
-                            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
-
-                    await msg.reply_text(
-                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.error(f"Error notifying AFK mention for user: {e}")
 
 
 
@@ -966,12 +753,8 @@ def main():
     app.add_handler(CommandHandler(["auth_sticker", "authsticker"], auth_sticker_command))
     app.add_handler(CommandHandler(["unauth_sticker", "unauthsticker"], unauth_sticker_command))
     app.add_handler(CommandHandler(["list_approved", "listapproved", "approved"], list_approved_command))
-    app.add_handler(CommandHandler(["afk"], afk_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
-
-    # Register AFK Return & Mention Listener (Group 0 - runs first for all updates)
-    app.add_handler(MessageHandler(~filters.StatusUpdate.ALL, handle_afk_messages), group=0)
 
     # Register Edited Message Listener (Group 1)
     app.add_handler(TypeHandler(Update, handle_edited_message_update), group=1)
@@ -985,6 +768,7 @@ def main():
 
     print("🚀 Edit Guardian Bot is running...")
     app.run_polling()
+
 
 
 

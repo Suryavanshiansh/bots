@@ -12,7 +12,7 @@ async def check_win_condition(chat_id: int) -> Optional[Dict]:
     Checks if any team has met win conditions and awards win coins (25 coins).
     Returns dict with winner info if ended, else None.
     """
-    players = await get_players(chat_id, alive_only=False) # Get all players to reward winners
+    players = await get_players(chat_id, alive_only=False)
     alive_players = [p for p in players if p["is_alive"]]
 
     if not alive_players:
@@ -99,10 +99,9 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
         if target_id in saved_player_ids:
             continue
         if target_id in player_dict:
-            target_player = player_dict[target_id]
-            # Check Bulletproof Vest powerup
+            target_player = dict(player_dict[target_id]) # Convert sqlite3.Row to dict safely
             if target_player.get("has_vest"):
-                continue # Vest absorbed the shot!
+                continue
 
             await set_player_dead(chat_id, target_id)
             deaths.append(target_player)
@@ -113,10 +112,10 @@ async def process_night_actions(chat_id: int, phase_round: int) -> Dict:
     }
 
 async def process_day_votes(chat_id: int, phase_round: int) -> Dict:
-    """Tallies votes cast via DM inline keyboard during Day phase."""
+    """Tallies Day votes cast via DM inline keyboard during Day phase."""
     votes = await get_day_votes(chat_id, phase_round)
     players = await get_players(chat_id, alive_only=True)
-    player_map = {p["user_id"]: p for p in players}
+    player_map = {p["user_id"]: dict(p) for p in players}
 
     tally: Dict[int, int] = {}
     for v in votes:
@@ -138,13 +137,13 @@ async def process_day_votes(chat_id: int, phase_round: int) -> Dict:
 
     if lynched_player:
         await set_player_dead(chat_id, lynched_id)
-        if lynched_player["role"] == "JESTER":
+        if lynched_player.get("role") == "JESTER":
             await record_win(lynched_id, "JESTER")
 
         return {
             "lynched": lynched_player,
             "votes_count": max_votes,
-            "is_jester": (lynched_player["role"] == "JESTER")
+            "is_jester": (lynched_player.get("role") == "JESTER")
         }
 
     return {"lynched": None, "reason": "Target player not found."}
