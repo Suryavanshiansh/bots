@@ -240,54 +240,91 @@ async def sync_unselected_clues():
 
 _word_confirm_events: dict[str, asyncio.Event] = {}
 
+# Lock to prevent concurrent submit_words calls (avoids duplicate word bursts)
+_submit_lock = asyncio.Lock()
+
+# Track words we have already SENT in this game session (separate from confirmed)
+_sent_words_this_game: set[str] = set()
+
+# Flood pause flag: set to True when a flood warning is detected
+_flood_paused: bool = False
+_flood_resume_time: float = 0.0
+
 
 async def submit_words(words: list[str]):
     """
     Type words in the group chat sequentially as the real user account.
     No bot name, no "Forwarded from" — completely anonymous!
-    Waits for Word Grid Bot's reply confirmation (☑️ You found WORD) per word.
-    After completing all words, syncs with GC clue list to request alternate candidates only for UNCHECKMARKED clues!
+    - Has submission lock to prevent concurrent duplicate runs
+    - Tracks sent words within a game session to prevent double sends
+    - Detects flood/spam bans and pauses automatically
+    - Uses human-like random delays between words
     """
-    group_target = await get_group_entity()
-    submitted = 0
+    global _flood_paused, _flood_resume_time
 
-    # Refresh history to get latest checkmarks
-    await _scan_recent_history()
+    if _submit_lock.locked():
+        log.warning("⚠️ submit_words already running — ignoring duplicate call to prevent flooding!")
+        return
 
-    for idx, word in enumerate(words):
-        clue_num = idx + 1
-        wu = word.upper()
+    async with _submit_lock:
+        group_target = await get_group_entity()
+        submitted = 0
 
-        if wu in state.guessed_words:
-            log.info(f"⏭️  Skipping #{clue_num} '{wu}' — already checkmarked/guessed")
-            continue
+        # Refresh history to get latest checkmarks
+        await _scan_recent_history()
 
-        evt = asyncio.Event()
-        _word_confirm_events[wu] = evt
+        for idx, word in enumerate(words):
+            clue_num = idx + 1
+            wu = word.upper()
 
-        log.info(f"⌨️  Sending word #{clue_num} '{wu}' to group...")
-        await client.send_message(group_target, wu)
-        submitted += 1
+            # Skip if already confirmed/guessed
+            if wu in state.guessed_words:
+                log.info(f"⏭️  Skipping #{clue_num} '{wu}' — already checkmarked/guessed")
+                continue
 
-        # Wait up to 3.5 seconds for confirmation reply from Word Grid Bot
-        try:
-            await asyncio.wait_for(evt.wait(), timeout=3.5)
-            log.info(f"🎉 Word #{clue_num} '{wu}' CONFIRMED by Word Grid Bot!")
-            state.guessed_words.add(wu)
-        except asyncio.TimeoutError:
-            log.warning(f"⚠️ Word #{clue_num} '{wu}' received NO reply from Word Grid Bot! Requesting alternate from solver...")
-            solver_target = await get_solver_entity()
-            await client.send_message(solver_target, str(clue_num))
-            await asyncio.sleep(1.5)
-        finally:
-            _word_confirm_events.pop(wu, None)
+            # Skip if already sent this session (prevent duplicates from re-trigger)
+            if wu in _sent_words_this_game:
+                log.info(f"⏭️  Skipping #{clue_num} '{wu}' — already sent this session")
+                continue
 
-        # Brief 1s pause before next word
-        await asyncio.sleep(1.0)
+            # Check if we're in flood pause
+            import time
+            now = time.monotonic()
+            if _flood_paused and now < _flood_resume_time:
+                wait_sec = _flood_resume_time - now
+                log.warning(f"🚫 Flood pause active! Waiting {wait_sec:.0f}s before resuming...")
+                await asyncio.sleep(wait_sec)
+                _flood_paused = False
 
-    log.info(f"✅ Finished word batch ({submitted} submitted). Syncing unselected clues from GC...")
-    await asyncio.sleep(2.0)
-    await sync_unselected_clues()
+            evt = asyncio.Event()
+            _word_confirm_events[wu] = evt
+
+            log.info(f"⌨️  Sending word #{clue_num} '{wu}' to group...")
+            await client.send_message(group_target, wu)
+            _sent_words_this_game.add(wu)
+            submitted += 1
+
+            # Wait up to 5s for Word Grid Bot confirmation
+            try:
+                await asyncio.wait_for(evt.wait(), timeout=5.0)
+                log.info(f"🎉 Word #{clue_num} '{wu}' CONFIRMED by Word Grid Bot!")
+                state.guessed_words.add(wu)
+            except asyncio.TimeoutError:
+                log.warning(f"⚠️ Word #{clue_num} '{wu}' — no reply. Requesting alternate from solver...")
+                solver_target = await get_solver_entity()
+                await client.send_message(solver_target, str(clue_num))
+                await asyncio.sleep(2.0)
+            finally:
+                _word_confirm_events.pop(wu, None)
+
+            # Human-like delay: base WORD_DELAY + random jitter (1.5s–3.5s)
+            delay = WORD_DELAY + random.uniform(0.8, 2.5)
+            log.info(f"⏳ Waiting {delay:.1f}s before next word...")
+            await asyncio.sleep(delay)
+
+        log.info(f"✅ Finished word batch ({submitted} submitted). Syncing unselected clues from GC...")
+        await asyncio.sleep(3.0)
+        await sync_unselected_clues()
 
 
 # ─── GROUP CHAT HANDLER ───────────────────────────────────────────────────────
@@ -308,6 +345,23 @@ async def handle_group_message(event):
     uname  = (getattr(sender, "username", "") or "").lower()
     text   = (msg.text or msg.caption or "").strip()
     is_wgb = uname == WORD_GRID_BOT.lower()
+
+    # ── Detect flood / spam ban messages from anti-spam bots ─────────────────
+    # ChatFight, Novizio, Rose, etc. warn when sending too fast
+    text_lower = text.lower()
+    flood_phrases = [
+        "is flooding", "blocked for", "will be ignored", "due to spamming",
+        "flood detected", "slow down", "too many messages", "muted for"
+    ]
+    if not is_wgb and any(p in text_lower for p in flood_phrases):
+        import time, re as _re
+        # Try to parse duration in minutes from message
+        minutes_match = _re.search(r"(\d+)\s*minute", text_lower)
+        pause_seconds = int(minutes_match.group(1)) * 60 if minutes_match else 300
+        _flood_paused = True
+        _flood_resume_time = time.monotonic() + pause_seconds
+        log.warning(f"🚫 FLOOD BAN DETECTED! Pausing word submission for {pause_seconds}s. Message: {text[:80]}")
+        return
 
     # ── Track words typed by OTHER players ───────────────────
     if not is_wgb and not msg.out and state.active:
@@ -330,6 +384,7 @@ async def handle_group_message(event):
             log.info("🏁 Game over detected! Resetting game state.")
             state.reset()
             _requested_clue_nums.clear()
+            _sent_words_this_game.clear()
             return
 
         # 2. NEW GAME (photo + clue text) — AUTO-FORWARD TO SOLVER BOT ────────
@@ -339,6 +394,7 @@ async def handle_group_message(event):
             state.active = True
             state.grid_message = msg
             state.clue_text = text
+            _sent_words_this_game.clear()  # Reset sent-words tracker for new game
             await _scan_recent_history()
             # Auto-send grid image + clues to solver bot (no manual forwarding needed!)
             asyncio.create_task(ask_solver(msg, text))
