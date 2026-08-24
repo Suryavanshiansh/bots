@@ -555,7 +555,37 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not user:
         return
 
-    reason = " ".join(context.args).strip() if context.args else "Away"
+    reason = " ".join(context.args).strip() if context.args else ""
+    
+    # If no reason typed, check if user replied to a message or sticker
+    if not reason and msg.reply_to_message:
+        reply_msg = msg.reply_to_message
+        if reply_msg.text:
+            reason = reply_msg.text.strip()
+        elif reply_msg.caption:
+            reason = reply_msg.caption.strip()
+        elif reply_msg.sticker:
+            emoji = reply_msg.sticker.emoji or ""
+            reason = f"[Sticker {emoji}]".strip()
+        elif reply_msg.photo:
+            reason = "[Photo]"
+        elif reply_msg.video:
+            reason = "[Video]"
+        elif reply_msg.animation:
+            reason = "[GIF]"
+        elif reply_msg.voice or reply_msg.audio:
+            reason = "[Audio]"
+        elif reply_msg.document:
+            doc_name = reply_msg.document.file_name or ""
+            reason = f"[Document] {doc_name}".strip()
+            
+    if not reason:
+        reason = "Away"
+
+    # Truncate reason if too long (max 200 chars)
+    if len(reason) > 200:
+        reason = reason[:197] + "..."
+
     upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
     set_user_afk(user.id, reason)
 
@@ -566,6 +596,7 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💤 <b>{safe_name}</b> is now AFK!\nReason: <i>{safe_reason}</i>",
         parse_mode="HTML"
     )
+
 
 async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
