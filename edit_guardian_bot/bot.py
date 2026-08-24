@@ -549,6 +549,17 @@ def format_afk_duration(seconds: float) -> str:
         
     return ", ".join(parts) if parts else "a moment"
 
+def get_message_link(chat, message_id: int) -> str:
+    if not message_id or not chat:
+        return ""
+    if getattr(chat, 'username', None):
+        return f"https://t.me/{chat.username}/{message_id}"
+    cid_str = str(chat.id)
+    if cid_str.startswith("-100"):
+        cid = cid_str[4:]
+        return f"https://t.me/c/{cid}/{message_id}"
+    return ""
+
 async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -556,28 +567,31 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reason = " ".join(context.args).strip() if context.args else ""
+    reason_msg_id = 0
     
     # If no reason typed, check if user replied to a message or sticker
-    if not reason and msg.reply_to_message:
+    if msg.reply_to_message:
         reply_msg = msg.reply_to_message
-        if reply_msg.text:
-            reason = reply_msg.text.strip()
-        elif reply_msg.caption:
-            reason = reply_msg.caption.strip()
-        elif reply_msg.sticker:
-            emoji = reply_msg.sticker.emoji or ""
-            reason = f"[Sticker {emoji}]".strip()
-        elif reply_msg.photo:
-            reason = "[Photo]"
-        elif reply_msg.video:
-            reason = "[Video]"
-        elif reply_msg.animation:
-            reason = "[GIF]"
-        elif reply_msg.voice or reply_msg.audio:
-            reason = "[Audio]"
-        elif reply_msg.document:
-            doc_name = reply_msg.document.file_name or ""
-            reason = f"[Document] {doc_name}".strip()
+        reason_msg_id = reply_msg.message_id
+        if not reason:
+            if reply_msg.text:
+                reason = reply_msg.text.strip()
+            elif reply_msg.caption:
+                reason = reply_msg.caption.strip()
+            elif reply_msg.sticker:
+                emoji = reply_msg.sticker.emoji or ""
+                reason = f"[Sticker {emoji}]".strip()
+            elif reply_msg.photo:
+                reason = "[Photo]"
+            elif reply_msg.video:
+                reason = "[Video]"
+            elif reply_msg.animation:
+                reason = "[GIF]"
+            elif reply_msg.voice or reply_msg.audio:
+                reason = "[Audio]"
+            elif reply_msg.document:
+                doc_name = reply_msg.document.file_name or ""
+                reason = f"[Document] {doc_name}".strip()
             
     if not reason:
         reason = "Away"
@@ -587,13 +601,19 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reason = reason[:197] + "..."
 
     upsert_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
-    set_user_afk(user.id, reason)
+    set_user_afk(user.id, reason, reason_msg_id, update.effective_chat.id)
 
     safe_name = html.escape(user.first_name or "User")
     safe_reason = html.escape(reason)
     
+    reason_html = f"<i>{safe_reason}</i>"
+    if reason_msg_id:
+        link = get_message_link(update.effective_chat, reason_msg_id)
+        if link:
+            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
+    
     await msg.reply_text(
-        f"💤 <b>{safe_name}</b> is now AFK!\nReason: <i>{safe_reason}</i>",
+        f"💤 <b>{safe_name}</b> is now AFK!\nReason: {reason_html}",
         parse_mode="HTML"
     )
 
@@ -655,8 +675,16 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                     duration_str = format_afk_duration(elapsed)
                     target_name = html.escape(target_user.first_name or "User")
                     safe_reason = html.escape(target_afk["reason"] or "Away")
+                    
+                    reason_html = f"<i>{safe_reason}</i>"
+                    r_msg_id = target_afk.get("reason_msg_id") or 0
+                    if r_msg_id:
+                        link = get_message_link(update.effective_chat, r_msg_id)
+                        if link:
+                            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
+
                     await msg.reply_text(
-                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: <i>{safe_reason}</i>",
+                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
                         parse_mode="HTML"
                     )
                 except Exception as e:
@@ -689,12 +717,21 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                     elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
                     duration_str = format_afk_duration(elapsed)
                     safe_reason = html.escape(target_afk.get("reason") or "Away")
+                    
+                    reason_html = f"<i>{safe_reason}</i>"
+                    r_msg_id = target_afk.get("reason_msg_id") or 0
+                    if r_msg_id:
+                        link = get_message_link(update.effective_chat, r_msg_id)
+                        if link:
+                            reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
+
                     await msg.reply_text(
-                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: <i>{safe_reason}</i>",
+                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
                         parse_mode="HTML"
                     )
                 except Exception as e:
                     logger.error(f"Error notifying AFK mention for user: {e}")
+
 
 
 # --- BOT OWNER EXCLUSIVE COMMANDS ---

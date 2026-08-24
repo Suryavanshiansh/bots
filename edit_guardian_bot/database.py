@@ -160,9 +160,21 @@ def init_db():
         CREATE TABLE IF NOT EXISTS afk_users (
             user_id BIGINT PRIMARY KEY,
             reason TEXT,
-            afk_since TEXT
+            afk_since TEXT,
+            reason_msg_id BIGINT DEFAULT 0,
+            chat_id BIGINT DEFAULT 0
         )
     """)
+
+    # Migrate columns if afk_users existed without reason_msg_id
+    try:
+        execute_query("ALTER TABLE afk_users ADD COLUMN reason_msg_id BIGINT DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        execute_query("ALTER TABLE afk_users ADD COLUMN chat_id BIGINT DEFAULT 0")
+    except Exception:
+        pass
 
     print("[DB] ✅ Database initialized successfully!")
 
@@ -296,16 +308,18 @@ def get_approved_sticker_users(chat_id: int):
 
 # --- AFK Users CRUD ---
 
-def set_user_afk(user_id: int, reason: str):
+def set_user_afk(user_id: int, reason: str, reason_msg_id: int = 0, chat_id: int = 0):
     now = datetime.utcnow().isoformat()
     query = """
-        INSERT INTO afk_users (user_id, reason, afk_since)
-        VALUES (%s, %s, %s)
+        INSERT INTO afk_users (user_id, reason, afk_since, reason_msg_id, chat_id)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT(user_id) DO UPDATE SET
             reason = EXCLUDED.reason,
-            afk_since = EXCLUDED.afk_since
+            afk_since = EXCLUDED.afk_since,
+            reason_msg_id = EXCLUDED.reason_msg_id,
+            chat_id = EXCLUDED.chat_id
     """
-    execute_query(query, (user_id, reason, now))
+    execute_query(query, (user_id, reason, now, reason_msg_id, chat_id))
 
 def remove_user_afk(user_id: int):
     afk_info = get_user_afk(user_id)
