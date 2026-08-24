@@ -191,10 +191,8 @@ async def afk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        args = []
-        if context and getattr(context, 'args', None):
-            args = list(context.args)
-        elif msg.text:
+        args = list(context.args) if (context and getattr(context, 'args', None)) else []
+        if not args and msg.text:
             parts = msg.text.strip().split()
             if len(parts) > 1:
                 args = parts[1:]
@@ -286,12 +284,7 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not user:
         return
 
-    # Fallback check: if message starts with /afk or /afk@username, trigger afk_command
-    if msg.text and (msg.text.strip().lower().startswith("/afk") or msg.text.strip().lower().startswith("/afk@")):
-        await afk_command(update, context)
-        return
-
-    # Skip processing if message is any other command
+    # Skip ALL command messages starting with '/' so commands never get treated as normal messages
     if msg.text and msg.text.strip().startswith("/"):
         return
 
