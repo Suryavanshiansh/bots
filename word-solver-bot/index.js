@@ -17,6 +17,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
 const SESSIONS_FILE = path.join(__dirname, 'sessions_data.json');
+const TARGETS_FILE = path.join(__dirname, 'targets_data.json');
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 // Start dummy HTTP health check server for Render Web Service port scanner
@@ -44,7 +45,11 @@ if (!BOT_TOKEN) {
 let dictionary = new Set();
 const sessions = new Map();
 
-// Load sessions from disk on startup
+// targetChats: maps userId -> { chatId, chatTitle }
+const targetChats = new Map();
+
+// ─── Session persistence ────────────────────────────────────────────────────
+
 function loadSessionsFromDisk() {
   try {
     if (fs.existsSync(SESSIONS_FILE)) {
@@ -59,7 +64,6 @@ function loadSessionsFromDisk() {
   }
 }
 
-// Save sessions to disk
 function saveSessionsToDisk() {
   try {
     const obj = {};
@@ -72,7 +76,36 @@ function saveSessionsToDisk() {
   }
 }
 
+// ─── Target chat persistence ─────────────────────────────────────────────────
+
+function loadTargetsFromDisk() {
+  try {
+    if (fs.existsSync(TARGETS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(TARGETS_FILE, 'utf-8'));
+      for (const [key, val] of Object.entries(data)) {
+        targetChats.set(Number(key), val);
+      }
+      console.log(`🎯 Loaded ${targetChats.size} saved target chats from disk.`);
+    }
+  } catch (e) {
+    console.error('Error loading targets from disk:', e);
+  }
+}
+
+function saveTargetsToDisk() {
+  try {
+    const obj = {};
+    for (const [key, val] of targetChats.entries()) {
+      obj[key] = val;
+    }
+    fs.writeFileSync(TARGETS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('Error saving targets to disk:', e);
+  }
+}
+
 loadSessionsFromDisk();
+loadTargetsFromDisk();
 
 function getSession(chatId) {
   if (!sessions.has(chatId)) {
@@ -88,6 +121,8 @@ function getSession(chatId) {
 
 const bot = new Telegraf(BOT_TOKEN || 'DUMMY_TOKEN');
 
+// ─── Commands ────────────────────────────────────────────────────────────────
+
 bot.command(['start', 'help'], (ctx) => {
   ctx.replyWithMarkdown(
     `🔥 **HARD MODE WORD SEARCH SOLVER BOT** 🔥\n\n` +
@@ -96,7 +131,15 @@ bot.command(['start', 'help'], (ctx) => {
     `2️⃣ **Send the Clues List** (e.g. \`B--- (4)\`, \`C----- (6)\`, etc.).\n` +
     `*(Or send/forward an image with the clues in the caption!)*\n\n` +
     `3️⃣ I will extract the grid and solve all words!\n` +
-    `4️⃣ If a word is wrong, reply with the number (e.g. \`5\` or \`5 wrong\`) to switch to another word option!`
+    `4️⃣ If a word is wrong, reply with the number (e.g. \`5\` or \`5 wrong\`) to switch!\n\n` +
+    `**📢 Group Chat Auto-Send:**\n` +
+    `Add me to your GC and type \`/settarget\` there.\n` +
+    `I'll send words directly to the GC — no "Forwarded from" label!\n\n` +
+    `Commands:\n` +
+    `• \`/settarget\` — Set current chat as target GC (run in GC)\n` +
+    `• \`/cleartarget\` — Remove target GC\n` +
+    `• \`/status\` — Show your current target GC\n` +
+    `• \`/reset\` — Reset your puzzle session`
   );
 });
 
@@ -107,14 +150,59 @@ bot.command('reset', (ctx) => {
   ctx.reply('🔄 Session reset! Send a new grid image or clue list to start a fresh puzzle.');
 });
 
+// /settarget — run this in the GROUP CHAT to set it as the target
+bot.command('settarget', (ctx) => {
+  const chatId = ctx.chat.id;
+  const chatType = ctx.chat.type;
+  const chatTitle = ctx.chat.title || ctx.chat.username || String(chatId);
+  const fromId = ctx.from.id;
+
+  if (chatType === 'private') {
+    return ctx.reply(
+      '⚠️ Run /settarget inside the **group chat** you want words sent to!\n\n' +
+      'Steps:\n1. Add this bot to your GC\n2. Open the GC\n3. Type /settarget there',
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  // Save: this user's target GC is this chat
+  targetChats.set(fromId, { chatId, chatTitle });
+  saveTargetsToDisk();
+
+  ctx.reply(`✅ Target GC set!\n\nWords will be sent directly to: **${chatTitle}**\n\nNow go to your DM with me and solve puzzles — I'll send the answers here automatically!`, { parse_mode: 'Markdown' });
+});
+
+// /cleartarget — remove target GC
+bot.command('cleartarget', (ctx) => {
+  const fromId = ctx.from.id;
+  if (targetChats.has(fromId)) {
+    const target = targetChats.get(fromId);
+    targetChats.delete(fromId);
+    saveTargetsToDisk();
+    ctx.reply(`✅ Target GC removed.\n\nWas: ${target.chatTitle}\n\nWords will no longer be auto-sent to any GC.`);
+  } else {
+    ctx.reply('ℹ️ You have no target GC set. Use /settarget in a group chat to set one.');
+  }
+});
+
+// /status — check target
+bot.command('status', (ctx) => {
+  const fromId = ctx.from.id;
+  if (targetChats.has(fromId)) {
+    const target = targetChats.get(fromId);
+    ctx.reply(`🎯 Your target GC: **${target.chatTitle}** (ID: \`${target.chatId}\`)\n\nWords will be auto-sent there when you solve a puzzle.`, { parse_mode: 'Markdown' });
+  } else {
+    ctx.reply('ℹ️ No target GC set.\n\nAdd me to your GC and run /settarget there to enable auto-send.');
+  }
+});
+
+// ─── Media Handlers ──────────────────────────────────────────────────────────
+
 async function processMediaMessage(ctx, fileId, mimeType = 'image/jpeg') {
   const chatId = ctx.chat.id;
   const session = getSession(chatId);
 
   try {
-    const photos = ctx.message.photo;
-    const highestResPhoto = photos ? photos[photos.length - 1] : null;
-
     await ctx.reply('🔍 Extracting grid & clues from image using Gemini Vision...');
 
     const fileUrl = await ctx.telegram.getFileLink(fileId);
@@ -162,18 +250,18 @@ async function processMediaMessage(ctx, fileId, mimeType = 'image/jpeg') {
 
     if (updatedGrid && updatedClues) {
       await ctx.reply(`✅ Extracted Grid (${session.grid.length}x${session.grid[0].length}) and ${session.clues.length} clues!`);
-      runSolverAndReply(ctx, session);
+      await runSolverAndReply(ctx, session);
     } else if (updatedGrid) {
       await ctx.reply(`✅ Grid extracted successfully (${session.grid.length}x${session.grid[0].length})!`);
       if (session.clues && session.clues.length > 0) {
-        runSolverAndReply(ctx, session);
+        await runSolverAndReply(ctx, session);
       } else {
         await ctx.reply('Now send or reply with the clues list (e.g. `B--- (4)`, `C----- (6)`, or full words).');
       }
     } else if (updatedClues) {
       await ctx.reply(`✅ Parsed ${session.clues.length} clues!`);
       if (session.grid && session.grid.length > 0) {
-        runSolverAndReply(ctx, session);
+        await runSolverAndReply(ctx, session);
       } else {
         await ctx.reply('Now send an image of the word search grid to solve!');
       }
@@ -200,7 +288,8 @@ bot.on('document', async (ctx) => {
   await processMediaMessage(ctx, doc.file_id, mime);
 });
 
-// Text Handler
+// ─── Text Handler ─────────────────────────────────────────────────────────────
+
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   const chatId = ctx.chat.id;
@@ -223,10 +312,23 @@ bot.on('text', async (ctx) => {
       if (advanced) {
         const solutionText = formatSolution(session, wordNum);
         await ctx.replyWithMarkdown(`🔄 **Updated Word #${wordNum}:**\n\n${solutionText}`);
-        // Also send the updated word as a standalone forwardable message
+
         const updatedCand = session.results[itemIndex]?.candidates[session.selectedIndices[itemIndex]];
         if (updatedCand) {
-          await ctx.reply(`🔄 New word #${wordNum}: ${updatedCand.word}`);
+          // Send to target GC if set, otherwise DM
+          const fromId = ctx.from.id;
+          const target = targetChats.get(fromId);
+          if (target) {
+            try {
+              await bot.telegram.sendMessage(target.chatId, updatedCand.word);
+              await ctx.reply(`✅ Sent updated word **${updatedCand.word}** directly to **${target.chatTitle}**!`, { parse_mode: 'Markdown' });
+            } catch (e) {
+              console.error('Failed to send to target GC:', e.message);
+              await ctx.reply(`🔄 New word #${wordNum}: ${updatedCand.word}\n\n⚠️ Failed to send to GC: ${e.message}`);
+            }
+          } else {
+            await ctx.reply(`🔄 New word #${wordNum}: ${updatedCand.word}`);
+          }
         }
         return;
       } else {
@@ -243,7 +345,7 @@ bot.on('text', async (ctx) => {
     saveSessionsToDisk();
 
     if (session.grid) {
-      runSolverAndReply(ctx, session);
+      await runSolverAndReply(ctx, session);
     } else {
       ctx.reply(`✅ Parsed ${clues.length} clue patterns!\n\nNow send an image of the word search grid to solve!`);
     }
@@ -257,7 +359,7 @@ bot.on('text', async (ctx) => {
     await ctx.reply(`✅ Grid parsed manually (${grid.length}x${grid[0].length})!`);
 
     if (session.clues) {
-      runSolverAndReply(ctx, session);
+      await runSolverAndReply(ctx, session);
     } else {
       ctx.reply('Now send the clues list (e.g. `B--- (4)`).');
     }
@@ -266,6 +368,8 @@ bot.on('text', async (ctx) => {
 
   ctx.reply('Forward me a word challenge message (with clues like `B--- (4)`) or send an image of the grid!');
 });
+
+// ─── Solver ───────────────────────────────────────────────────────────────────
 
 async function runSolverAndReply(ctx, session) {
   if (!dictionary || dictionary.size === 0) {
@@ -276,11 +380,11 @@ async function runSolverAndReply(ctx, session) {
   session.selectedIndices = assignUniqueCandidates(session.results);
   saveSessionsToDisk();
 
-  // 1. Send full solution summary
+  // 1. Send full solution summary in DM
   const solutionText = formatSolution(session);
   await ctx.replyWithMarkdown(solutionText);
 
-  // 2. Send each word as a separate forwardable message
+  // 2. Collect solved words
   const wordMessages = [];
   session.results.forEach((res, i) => {
     const selectedIdx = session.selectedIndices[i] || 0;
@@ -290,14 +394,41 @@ async function runSolverAndReply(ctx, session) {
     }
   });
 
-  if (wordMessages.length > 0) {
-    await ctx.reply('📤 *Words to forward one by one:*', { parse_mode: 'Markdown' });
+  if (wordMessages.length === 0) return;
+
+  // 3. Check if user has a target GC set
+  const fromId = ctx.from.id;
+  const target = targetChats.get(fromId);
+
+  if (target) {
+    // Send words directly to GC (no "Forwarded from" label!)
+    try {
+      for (const word of wordMessages) {
+        await bot.telegram.sendMessage(target.chatId, word);
+        await new Promise(r => setTimeout(r, 150));
+      }
+      await ctx.reply(`✅ All ${wordMessages.length} words sent directly to **${target.chatTitle}**! 🎯`, { parse_mode: 'Markdown' });
+    } catch (e) {
+      console.error('Failed to send words to target GC:', e.message);
+      await ctx.reply(`⚠️ Failed to send to GC (${e.message}).\n\nMake sure I'm still a member of the group!\n\nSending words here instead:`);
+      // Fallback: send in DM
+      await ctx.reply('📤 *Words (send manually):*', { parse_mode: 'Markdown' });
+      for (const word of wordMessages) {
+        await ctx.reply(word);
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+  } else {
+    // No GC set — send words one-by-one in DM so user can forward
+    await ctx.reply('📤 *Words to forward one by one:*\n_(Tip: Set a target GC with /settarget to skip forwarding!)_', { parse_mode: 'Markdown' });
     for (const word of wordMessages) {
       await ctx.reply(word);
-      await new Promise(r => setTimeout(r, 100)); // small delay to preserve order
+      await new Promise(r => setTimeout(r, 100));
     }
   }
 }
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log('🚀 Loading dictionary...');
