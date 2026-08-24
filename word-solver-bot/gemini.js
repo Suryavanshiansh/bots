@@ -30,13 +30,13 @@ function getCurrentApiKey(providedKey) {
 
 console.log(`🔑 Loaded ${API_KEYS.length} Gemini API key(s).`);
 
-// ─── Model list ──────────────────────────────────────────────────────────────
+// ─── Model list (Fastest OCR models first) ──────────────────────────────────
 const CANDIDATE_MODELS = [
-  'gemini-3.6-flash',
   'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-3.6-flash',
   'gemini-3.5-flash',
   'gemini-flash-latest',
-  'gemini-2.0-flash',
   'gemini-1.5-flash'
 ];
 
