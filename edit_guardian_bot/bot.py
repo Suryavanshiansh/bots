@@ -488,27 +488,37 @@ async def list_approved_command(update: Update, context: ContextTypes.DEFAULT_TY
             await msg.reply_text("⚠️ This command can only be used in group chats.")
         return
 
-    chat_id = update.effective_chat.id
-    edit_users = get_approved_edit_users(chat_id)
-    sticker_users = get_approved_sticker_users(chat_id)
+    try:
+        chat_id = update.effective_chat.id
+        edit_users = get_approved_edit_users(chat_id)
+        sticker_users = get_approved_sticker_users(chat_id)
 
-    def format_user_entry(uid: int) -> str:
-        db_u = get_user_by_id(uid)
-        if db_u:
-            name = html.escape(db_u['first_name'] or "User")
-            uname = f" (@{html.escape(db_u['username'])})" if db_u['username'] else ""
-            return f"• {name}{uname} (<code>{uid}</code>)"
-        return f"• User <code>{uid}</code>"
+        def format_user_entry(uid: int) -> str:
+            try:
+                db_u = get_user_by_id(uid)
+                if db_u and isinstance(db_u, dict):
+                    fname = db_u.get('first_name') or "User"
+                    uname = db_u.get('username')
+                    name = html.escape(str(fname))
+                    uname_str = f" (@{html.escape(str(uname))})" if uname else ""
+                    return f"• {name}{uname_str} (<code>{uid}</code>)"
+            except Exception as e:
+                logger.error(f"Error formatting user entry {uid}: {e}")
+            return f"• User <code>{uid}</code>"
 
-    edit_list = "\n".join([format_user_entry(uid) for uid in edit_users]) if edit_users else "None"
-    sticker_list = "\n".join([format_user_entry(uid) for uid in sticker_users]) if sticker_users else "None"
+        edit_list = "\n".join([format_user_entry(uid) for uid in edit_users]) if edit_users else "None"
+        sticker_list = "\n".join([format_user_entry(uid) for uid in sticker_users]) if sticker_users else "None"
 
-    await msg.reply_text(
-        f"📋 <b>Authorized Members in this Chat:</b>\n\n"
-        f"✏️ <b>Approved Edit Users:</b>\n{edit_list}\n\n"
-        f"🖼️ <b>Approved Sticker/Media Users:</b>\n{sticker_list}",
-        parse_mode="HTML"
-    )
+        await msg.reply_text(
+            f"📋 <b>Authorized Members in this Chat:</b>\n\n"
+            f"✏️ <b>Approved Edit Users:</b>\n{edit_list}\n\n"
+            f"🖼️ <b>Approved Sticker/Media Users:</b>\n{sticker_list}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error in list_approved_command: {e}", exc_info=e)
+        await msg.reply_text("⚠️ Unable to fetch approved members at this moment. Please try again.")
+
 
 # --- AFK FEATURE LOGIC ---
 

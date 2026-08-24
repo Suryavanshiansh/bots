@@ -26,7 +26,7 @@ USE_POSTGRES = False
 
 def check_postgres_connection():
     global USE_POSTGRES
-    if DATABASE_URL and PSYCOPG2_AVAILABLE:
+    if DATABASE_URL and PSYCOPG2_AVAILABLE and "YOUR-PASSWORD" not in DATABASE_URL:
         try:
             conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
             conn.close()
@@ -39,60 +39,72 @@ def check_postgres_connection():
             USE_POSTGRES = False
             return False
     else:
+        if DATABASE_URL and "YOUR-PASSWORD" in DATABASE_URL:
+            print("[DB] ⚠️ DATABASE_URL contains placeholder '[YOUR-PASSWORD]'. Using local SQLite.")
+        else:
+            print("[DB] ℹ️ DATABASE_URL not set. Using local SQLite.")
         USE_POSTGRES = False
         return False
 
 def get_connection():
+    global USE_POSTGRES
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = True
-        return conn
-    else:
-        conn = sqlite3.connect(SQLITE_DB_PATH)
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+            conn.autocommit = True
+            return conn
+        except Exception as e:
+            print(f"[DB] ⚠️ PostgreSQL connection failed during query: {e}. Falling back to SQLite.")
+            USE_POSTGRES = False
+
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetchall: bool = False, commit: bool = True):
-    """Execute SQL query safely across PostgreSQL and SQLite."""
+    """Execute SQL query safely across PostgreSQL and SQLite with automatic fallback."""
     is_select = query.strip().upper().startswith("SELECT")
     
     if USE_POSTGRES:
-        with get_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute(query, params)
-            if fetchone:
-                res = cursor.fetchone()
-                return dict(res) if res else None
-            if fetchall:
-                res = cursor.fetchall()
-                return [dict(r) for r in res]
-            return cursor.rowcount
-    else:
-        # SQLite uses ? for placeholders instead of %s
-        sqlite_query = query.replace("%s", "?")
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(sqlite_query, params)
-            if commit and not is_select:
-                conn.commit()
-            if fetchone:
-                res = cursor.fetchone()
-                if res is None:
-                    return None
-                if isinstance(res, sqlite3.Row):
-                    return dict(res)
-                # If tuple, map columns
-                colnames = [desc[0] for desc in cursor.description]
-                return dict(zip(colnames, res))
-            if fetchall:
-                res = cursor.fetchall()
-                if not res:
-                    return []
-                if isinstance(res[0], sqlite3.Row):
+        try:
+            with get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cursor.execute(query, params)
+                if fetchone:
+                    res = cursor.fetchone()
+                    return dict(res) if res else None
+                if fetchall:
+                    res = cursor.fetchall()
                     return [dict(r) for r in res]
-                colnames = [desc[0] for desc in cursor.description]
-                return [dict(zip(colnames, r)) for r in res]
-            return cursor.rowcount
+                return cursor.rowcount
+        except Exception as e:
+            print(f"[DB] ⚠️ Postgres query failed: {e}. Retrying with SQLite fallback...")
+            # Fallthrough to SQLite block below
+
+    # SQLite execution
+    sqlite_query = query.replace("%s", "?")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sqlite_query, params)
+        if commit and not is_select:
+            conn.commit()
+        if fetchone:
+            res = cursor.fetchone()
+            if res is None:
+                return None
+            if isinstance(res, sqlite3.Row):
+                return dict(res)
+            colnames = [desc[0] for desc in cursor.description]
+            return dict(zip(colnames, res))
+        if fetchall:
+            res = cursor.fetchall()
+            if not res:
+                return []
+            if isinstance(res[0], sqlite3.Row):
+                return [dict(r) for r in res]
+            colnames = [desc[0] for desc in cursor.description]
+            return [dict(zip(colnames, r)) for r in res]
+        return cursor.rowcount
 
 def init_db():
     check_postgres_connection()
