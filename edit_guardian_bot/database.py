@@ -2,18 +2,48 @@ import os
 import sqlite3
 from datetime import datetime
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-IS_POSTGRES = bool(DATABASE_URL and (DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")))
+RAW_DB_URL = os.getenv("DATABASE_URL", "").strip()
 
-if IS_POSTGRES:
+# Normalize postgres:// to postgresql:// for psycopg2 compatibility
+if RAW_DB_URL.startswith("postgres://"):
+    DATABASE_URL = RAW_DB_URL.replace("postgres://", "postgresql://", 1)
+else:
+    DATABASE_URL = RAW_DB_URL
+
+# Check if psycopg2 is available
+try:
     import psycopg2
     import psycopg2.extras
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SQLITE_DB_PATH = os.path.join(BASE_DIR, "guardian.db")
 
+# Flag to track whether active database mode is PostgreSQL
+USE_POSTGRES = False
+
+def check_postgres_connection():
+    global USE_POSTGRES
+    if DATABASE_URL and PSYCOPG2_AVAILABLE:
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+            conn.close()
+            USE_POSTGRES = True
+            print("[DB] ✅ Successfully connected to PostgreSQL (Supabase)!")
+            return True
+        except Exception as e:
+            print(f"[DB] ⚠️ Could not connect to PostgreSQL: {e}")
+            print("[DB] 🔄 Falling back to local SQLite database...")
+            USE_POSTGRES = False
+            return False
+    else:
+        USE_POSTGRES = False
+        return False
+
 def get_connection():
-    if IS_POSTGRES:
+    if USE_POSTGRES:
         conn = psycopg2.connect(DATABASE_URL)
         conn.autocommit = True
         return conn
@@ -26,7 +56,7 @@ def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetcha
     """Execute SQL query safely across PostgreSQL and SQLite."""
     is_select = query.strip().upper().startswith("SELECT")
     
-    if IS_POSTGRES:
+    if USE_POSTGRES:
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cursor.execute(query, params)
@@ -47,17 +77,29 @@ def execute_query(query: str, params: tuple = (), fetchone: bool = False, fetcha
                 conn.commit()
             if fetchone:
                 res = cursor.fetchone()
-                return dict(res) if res else None
+                if res is None:
+                    return None
+                if isinstance(res, sqlite3.Row):
+                    return dict(res)
+                # If tuple, map columns
+                colnames = [desc[0] for desc in cursor.description]
+                return dict(zip(colnames, res))
             if fetchall:
                 res = cursor.fetchall()
-                return [dict(r) for r in res]
+                if not res:
+                    return []
+                if isinstance(res[0], sqlite3.Row):
+                    return [dict(r) for r in res]
+                colnames = [desc[0] for desc in cursor.description]
+                return [dict(zip(colnames, r)) for r in res]
             return cursor.rowcount
 
 def init_db():
-    if IS_POSTGRES:
-        print("[DB] Connecting to PostgreSQL (Supabase) database...")
+    check_postgres_connection()
+    if USE_POSTGRES:
+        print("[DB] Initializing PostgreSQL database tables...")
     else:
-        print(f"[DB] Using local SQLite database at: {SQLITE_DB_PATH}")
+        print(f"[DB] Initializing local SQLite database at: {SQLITE_DB_PATH}")
 
     # Chat settings table
     execute_query("""
@@ -283,7 +325,7 @@ def get_bot_stats():
     return {
         "chats": chats,
         "approved_edits": edits,
-        "approved_stickers": stickers,
+        "approved_sticker_users": stickers,
         "cached_users": users,
         "afk_users": afks
     }
