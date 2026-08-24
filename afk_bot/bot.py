@@ -269,12 +269,12 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     afk_info = remove_user_afk(user.id)
     if afk_info:
         try:
-            afk_time = parse_afk_time(afk_info["afk_since"])
+            afk_time = parse_afk_time(afk_info.get("afk_since", ""))
             elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
             duration_str = format_afk_duration(elapsed)
             safe_name = html.escape(user.first_name or "User")
             await msg.reply_text(
-                f" Welcome back,qt💋 <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
+                f"👋 Welcome back <b>{safe_name}</b>! You were away for <b>{duration_str}</b>.",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -284,18 +284,18 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     notified_user_ids = set()
 
     # Check Reply-to message
-    if msg.reply_to_message and msg.reply_to_message.from_user:
+    if msg.reply_to_message:
         target_user = msg.reply_to_message.from_user
-        if target_user.id != user.id:
+        if target_user and target_user.id != user.id:
             target_afk = get_user_afk(target_user.id)
             if target_afk:
                 notified_user_ids.add(target_user.id)
                 try:
-                    afk_time = parse_afk_time(target_afk["afk_since"])
+                    afk_time = parse_afk_time(target_afk.get("afk_since", ""))
                     elapsed = max(0.0, (datetime.utcnow() - afk_time).total_seconds())
                     duration_str = format_afk_duration(elapsed)
-                    target_name = html.escape(target_user.first_name or "User")
-                    safe_reason = html.escape(target_afk["reason"] or "Away")
+                    target_name = html.escape(target_user.first_name or target_afk.get("first_name") or "User")
+                    safe_reason = html.escape(target_afk.get("reason") or "Away")
                     
                     reason_html = f"<i>{safe_reason}</i>"
                     r_msg_id = target_afk.get("reason_msg_id") or 0
@@ -305,7 +305,7 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                             reason_html = f'<a href="{link}"><i>{safe_reason}</i></a>'
 
                     await msg.reply_text(
-                        f"💤 <b>{target_name}</b> Qt💋 is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
+                        f"💤 <b>{target_name}</b> is currently AFK! (Away for <b>{duration_str}</b>)\nReason: {reason_html}",
                         parse_mode="HTML"
                     )
                 except Exception as e:
@@ -352,6 +352,7 @@ async def handle_afk_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                     )
                 except Exception as e:
                     logger.error(f"Error notifying AFK mention for user: {e}")
+
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
