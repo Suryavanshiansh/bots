@@ -286,6 +286,24 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             t_id = pt.get("target_id")
             t_name = pt.get("target_name")
 
+            if not t_name:
+                if t_id:
+                    try:
+                        chat = await context.bot.get_chat(t_id)
+                        if chat and chat.first_name:
+                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
+                            t_name = chat.first_name.strip()
+                    except Exception as e:
+                        logging.debug(f"Could not fetch chat for past target {t_id}: {e}")
+                elif t_user:
+                    try:
+                        chat = await context.bot.get_chat(f"@{t_user}")
+                        if chat and chat.first_name:
+                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
+                            t_name = chat.first_name.strip()
+                    except Exception as e:
+                        logging.debug(f"Could not fetch chat for past target @{t_user}: {e}")
+
             w_id = uuid.uuid4().hex[:10]
             save_whisper(
                 whisper_id=w_id,
