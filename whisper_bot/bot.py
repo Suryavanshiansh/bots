@@ -222,31 +222,14 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if target_index != -1 or target_username or target_id:
         # User explicitly specified a target in the query
-        # Fetch target user profile from Telegram if not in database yet
         if target_id:
             db_u = get_user_by_id(target_id)
-            if not db_u or not db_u.get("first_name"):
-                try:
-                    chat = await context.bot.get_chat(target_id)
-                    if chat and chat.first_name:
-                        upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
-                        if chat.username:
-                            target_username = chat.username.lower()
-                except Exception as e:
-                    logging.debug(f"Could not fetch chat for user ID {target_id}: {e}")
+            if db_u and db_u.get("username"):
+                target_username = db_u["username"]
         elif target_username:
             db_u = get_user_by_username(target_username)
             if db_u and db_u.get("user_id"):
                 target_id = db_u["user_id"]
-            else:
-                try:
-                    chat = await context.bot.get_chat(f"@{target_username}")
-                    if chat:
-                        target_id = chat.id
-                        if chat.first_name:
-                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
-                except Exception as e:
-                    logging.debug(f"Could not fetch chat for @{target_username}: {e}")
 
         whisper_id = uuid.uuid4().hex[:10]
         save_whisper(
@@ -285,24 +268,6 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             t_user = pt.get("target_username")
             t_id = pt.get("target_id")
             t_name = pt.get("target_name")
-
-            if not t_name:
-                if t_id:
-                    try:
-                        chat = await context.bot.get_chat(t_id)
-                        if chat and chat.first_name:
-                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
-                            t_name = chat.first_name.strip()
-                    except Exception as e:
-                        logging.debug(f"Could not fetch chat for past target {t_id}: {e}")
-                elif t_user:
-                    try:
-                        chat = await context.bot.get_chat(f"@{t_user}")
-                        if chat and chat.first_name:
-                            upsert_user(chat.id, chat.username, chat.first_name, chat.last_name)
-                            t_name = chat.first_name.strip()
-                    except Exception as e:
-                        logging.debug(f"Could not fetch chat for past target @{t_user}: {e}")
 
             w_id = uuid.uuid4().hex[:10]
             save_whisper(
