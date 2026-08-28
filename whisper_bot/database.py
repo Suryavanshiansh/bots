@@ -19,11 +19,14 @@ def is_using_supabase() -> bool:
 
 def get_db():
     if is_using_supabase():
-        return psycopg2.connect(SUPABASE_URL)
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            return psycopg2.connect(SUPABASE_URL)
+        except Exception as e:
+            logging.error(f"[DB] Supabase connection error: {e}. Falling back to local SQLite.")
+    
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def execute_query(query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False):
     use_pg = is_using_supabase()

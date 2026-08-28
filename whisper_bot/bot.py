@@ -167,170 +167,210 @@ def resolve_target_display_info(target_username: Optional[str], target_id: Optio
     return "Anyone", "Anyone"
 
 async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query.strip()
-    sender = update.inline_query.from_user
-    upsert_user(sender.id, sender.username, sender.first_name, sender.last_name)
+    try:
+        query = update.inline_query.query.strip()
+        sender = update.inline_query.from_user
+        try:
+            upsert_user(sender.id, sender.username, sender.first_name, sender.last_name)
+        except Exception as e:
+            logging.error(f"Error in upsert_user: {e}")
 
-    bot_user = await context.bot.get_me()
-    bot_username = bot_user.username or "whisperbot"
+        bot_user = await context.bot.get_me()
+        bot_username = bot_user.username or "whisperbot"
 
-    if not query:
-        results = [
-            InlineQueryResultArticle(
-                id="help",
-                title="🤫 How to send a Secret Whisper",
-                description=f"Format: @{bot_username} [secret message] @username or [user_id]",
-                input_message_content=InputTextMessageContent(
-                    f"<b>🤫 Secret Whisper Guide:</b>\n\n"
-                    f"Type in any chat:\n"
-                    f"<code>@{bot_username} [secret message] @target_username</code>\n"
-                    f"or\n"
-                    f"<code>@{bot_username} [secret message] [target_user_id]</code>",
-                    parse_mode="HTML"
+        if not query:
+            results = [
+                InlineQueryResultArticle(
+                    id="help",
+                    title="🤫 How to send a Secret Whisper",
+                    description=f"Format: @{bot_username} [secret message] @username or [user_id]",
+                    input_message_content=InputTextMessageContent(
+                        f"<b>🤫 Secret Whisper Guide:</b>\n\n"
+                        f"Type in any chat:\n"
+                        f"<code>@{bot_username} [secret message] @target_username</code>\n"
+                        f"or\n"
+                        f"<code>@{bot_username} [secret message] [target_user_id]</code>",
+                        parse_mode="HTML"
+                    )
                 )
-            )
-        ]
-        await update.inline_query.answer(results, cache_time=0, is_personal=True)
-        return
+            ]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            return
 
-    words = query.split()
-    target_username: Optional[str] = None
-    target_id: Optional[int] = None
-    secret_text = ""
+        words = query.split()
+        target_username: Optional[str] = None
+        target_id: Optional[int] = None
+        secret_text = ""
 
-    # Parse target username or target ID from anywhere in query (first, last, or middle)
-    target_index = -1
-    for i, word in enumerate(words):
-        if word.startswith("@") and len(word) > 1:
-            target_username = word[1:].lower()
-            target_index = i
-            break
-        elif word.isdigit() and len(word) >= 5:
-            target_id = int(word)
-            target_index = i
-            break
+        # Parse target username or target ID from anywhere in query (first, last, or middle)
+        target_index = -1
+        for i, word in enumerate(words):
+            if word.startswith("@") and len(word) > 1:
+                target_username = word[1:].lower()
+                target_index = i
+                break
+            elif word.isdigit() and len(word) >= 5:
+                target_id = int(word)
+                target_index = i
+                break
 
-    if target_index != -1:
-        secret_text = " ".join(words[:target_index] + words[target_index+1:])
-    else:
-        secret_text = query
+        if target_index != -1:
+            secret_text = " ".join(words[:target_index] + words[target_index+1:])
+        else:
+            secret_text = query
 
-    if not secret_text:
-        secret_text = "Secret Message"
+        if not secret_text:
+            secret_text = "Secret Message"
 
-    results = []
+        results = []
 
-    if target_index != -1 or target_username or target_id:
-        # User explicitly specified a target in the query
-        if target_id:
-            db_u = get_user_by_id(target_id)
-            if db_u and db_u.get("username"):
-                target_username = db_u["username"]
-        elif target_username:
-            db_u = get_user_by_username(target_username)
-            if db_u and db_u.get("user_id"):
-                target_id = db_u["user_id"]
+        if target_index != -1 or target_username or target_id:
+            # User explicitly specified a target in the query
+            if target_id:
+                try:
+                    db_u = get_user_by_id(target_id)
+                    if db_u and db_u.get("username"):
+                        target_username = db_u["username"]
+                except Exception as e:
+                    logging.error(f"Error fetching user by id: {e}")
+            elif target_username:
+                try:
+                    db_u = get_user_by_username(target_username)
+                    if db_u and db_u.get("user_id"):
+                        target_id = db_u["user_id"]
+                except Exception as e:
+                    logging.error(f"Error fetching user by username: {e}")
 
-        whisper_id = uuid.uuid4().hex[:10]
-        save_whisper(
-            whisper_id=whisper_id,
-            sender_id=sender.id,
-            sender_username=sender.username,
-            target_id=target_id,
-            target_username=target_username,
-            secret_text=secret_text
-        )
+            whisper_id = uuid.uuid4().hex[:10]
+            try:
+                save_whisper(
+                    whisper_id=whisper_id,
+                    sender_id=sender.id,
+                    sender_username=sender.username,
+                    target_id=target_id,
+                    target_username=target_username,
+                    secret_text=secret_text
+                )
+            except Exception as e:
+                logging.error(f"Error saving whisper: {e}")
 
-        target_display, target_plain = resolve_target_display_info(target_username, target_id)
+            target_display, target_plain = resolve_target_display_info(target_username, target_id)
 
-        message_content = (
-            f"🎁 <b>A secret whisper has been sent to</b> {target_display}!\n"
-            f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
-        )
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]
-        ])
-        results.append(
-            InlineQueryResultArticle(
-                id=whisper_id,
-                title=f"🔒 Send Secret Whisper to {target_plain}",
-                description=f"Secret: {secret_text[:30]}...",
-                input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
-                reply_markup=keyboard
-            )
-        )
-    else:
-        # No target explicitly typed, show past recipients list as quick selection options!
-        past_targets = get_all_past_targets(sender.id)
-
-        for pt in past_targets:
-            t_user = pt.get("target_username")
-            t_id = pt.get("target_id")
-            t_name = pt.get("target_name")
-
-            w_id = uuid.uuid4().hex[:10]
-            save_whisper(
-                whisper_id=w_id,
-                sender_id=sender.id,
-                sender_username=sender.username,
-                target_id=t_id,
-                target_username=t_user,
-                secret_text=secret_text
+            message_content = (
+                f"🎁 <b>A secret whisper has been sent to</b> {target_display}!\n"
+                f"<i>Only</i> {target_display} <i>or the sender can open this whisper.</i>"
             )
 
-            t_disp, t_plain = resolve_target_display_info(t_user, t_id)
-            if t_name:
-                t_plain = t_name.strip()
-                t_disp = f'<b>{t_plain}</b>'
-
-            t_title = f"👤 Send to {t_plain}"
-
-            m_content = (
-                f"🎁 <b>A secret whisper has been sent to</b> {t_disp}!\n"
-                f"<i>Only</i> {t_disp} <i>or the sender can open this whisper.</i>"
-            )
-            k_board = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{w_id}")]
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]
             ])
             results.append(
                 InlineQueryResultArticle(
-                    id=w_id,
-                    title=t_title,
+                    id=whisper_id,
+                    title=f"🔒 Send Secret Whisper to {target_plain}",
                     description=f"Secret: {secret_text[:30]}...",
-                    input_message_content=InputTextMessageContent(m_content, parse_mode="HTML"),
-                    reply_markup=k_board
+                    input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
+                    reply_markup=keyboard
+                )
+            )
+        else:
+            # No target explicitly typed, show past recipients list as quick selection options!
+            past_targets = []
+            try:
+                past_targets = get_all_past_targets(sender.id)
+            except Exception as e:
+                logging.error(f"Error fetching past targets: {e}")
+
+            for pt in past_targets:
+                t_user = pt.get("target_username")
+                t_id = pt.get("target_id")
+                t_name = pt.get("target_name")
+
+                w_id = uuid.uuid4().hex[:10]
+                try:
+                    save_whisper(
+                        whisper_id=w_id,
+                        sender_id=sender.id,
+                        sender_username=sender.username,
+                        target_id=t_id,
+                        target_username=t_user,
+                        secret_text=secret_text
+                    )
+                except Exception as e:
+                    logging.error(f"Error saving past target whisper: {e}")
+
+                t_disp, t_plain = resolve_target_display_info(t_user, t_id)
+                if t_name:
+                    t_plain = t_name.strip()
+                    t_disp = f'<b>{t_plain}</b>'
+
+                t_title = f"👤 Send to {t_plain}"
+
+                m_content = (
+                    f"🎁 <b>A secret whisper has been sent to</b> {t_disp}!\n"
+                    f"<i>Only</i> {t_disp} <i>or the sender can open this whisper.</i>"
+                )
+                k_board = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{w_id}")]
+                ])
+                results.append(
+                    InlineQueryResultArticle(
+                        id=w_id,
+                        title=t_title,
+                        description=f"Secret: {secret_text[:30]}...",
+                        input_message_content=InputTextMessageContent(m_content, parse_mode="HTML"),
+                        reply_markup=k_board
+                    )
+                )
+
+            # Always include option for Anyone as well
+            anyone_id = uuid.uuid4().hex[:10]
+            try:
+                save_whisper(
+                    whisper_id=anyone_id,
+                    sender_id=sender.id,
+                    sender_username=sender.username,
+                    target_id=None,
+                    target_username=None,
+                    secret_text=secret_text
+                )
+            except Exception as e:
+                logging.error(f"Error saving anyone whisper: {e}")
+
+            anyone_content = (
+                f"🎁 <b>A secret whisper has been sent to Anyone!</b>\n"
+                f"<i>Only Anyone or the sender can open this whisper.</i>"
+            )
+            anyone_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{anyone_id}")]
+            ])
+            results.append(
+                InlineQueryResultArticle(
+                    id=anyone_id,
+                    title="🌐 Send to Anyone",
+                    description=f"Secret: {secret_text[:30]}...",
+                    input_message_content=InputTextMessageContent(anyone_content, parse_mode="HTML"),
+                    reply_markup=anyone_keyboard
                 )
             )
 
-        # Always include option for Anyone as well
-        anyone_id = uuid.uuid4().hex[:10]
-        save_whisper(
-            whisper_id=anyone_id,
-            sender_id=sender.id,
-            sender_username=sender.username,
-            target_id=None,
-            target_username=None,
-            secret_text=secret_text
-        )
-        anyone_content = (
-            f"🎁 <b>A secret whisper has been sent to Anyone!</b>\n"
-            f"<i>Only Anyone or the sender can open this whisper.</i>"
-        )
-        anyone_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{anyone_id}")]
-        ])
-        results.append(
-            InlineQueryResultArticle(
-                id=anyone_id,
-                title="🌐 Send to Anyone",
-                description=f"Secret: {secret_text[:30]}...",
-                input_message_content=InputTextMessageContent(anyone_content, parse_mode="HTML"),
-                reply_markup=anyone_keyboard
-            )
-        )
-
-    await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+    except Exception as e:
+        logging.error(f"Fatal error in inline_whisper_query: {e}", exc_info=True)
+        try:
+            whisper_id = uuid.uuid4().hex[:10]
+            message_content = "🎁 <b>A secret whisper has been sent!</b>\n<i>Only the intended recipient or the sender can open this whisper.</i>"
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Show Secret Whisper 🤫", callback_data=f"ws_{whisper_id}")]])
+            results = [InlineQueryResultArticle(
+                id=whisper_id,
+                title="🔒 Send Secret Whisper",
+                description="Click to send secret whisper",
+                input_message_content=InputTextMessageContent(message_content, parse_mode="HTML"),
+                reply_markup=keyboard
+            )]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        except Exception:
+            pass
 
 async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
