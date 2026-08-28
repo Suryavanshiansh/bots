@@ -175,8 +175,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logging.error(f"Error in upsert_user: {e}")
 
-        bot_user = await context.bot.get_me()
-        bot_username = bot_user.username or "whisperbot"
+        bot_username = context.bot.username or "XXThc_bot"
 
         if not query:
             results = [
