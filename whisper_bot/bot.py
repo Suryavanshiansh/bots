@@ -190,7 +190,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
             )
         ]
-        await update.inline_query.answer(results, cache_time=1)
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
         return
 
     words = query.split()
@@ -330,7 +330,7 @@ async def inline_whisper_query(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         )
 
-    await update.inline_query.answer(results, cache_time=1)
+    await update.inline_query.answer(results, cache_time=0, is_personal=True)
 
 async def handle_whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

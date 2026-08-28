@@ -254,6 +254,11 @@ def get_all_past_targets(sender_id: int, limit: int = 40) -> List[Dict[str, Any]
             fn = first_name.strip()
             ln = last_name.strip() if last_name else ""
             name = f"{fn} {ln}".strip() if ln else fn
+        elif row.get("target_username"):
+            name = f"@{row.get('target_username').lstrip('@')}"
+        elif row.get("target_id"):
+            name = f"User ID {row.get('target_id')}"
+
         results.append({
             "target_username": row.get("target_username"),
             "target_id": row.get("target_id"),
