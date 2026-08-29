@@ -91,17 +91,21 @@ def start_health_server():
         logger.warning(f"[HTTP] Could not start health check server: {e}")
 
 def keep_alive_heartbeat():
-    time.sleep(10)
-    port = int(os.getenv("PORT", 8080))
-    url = f"http://127.0.0.1:{port}/"
+    url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("KEEP_ALIVE_URL") or os.getenv("PING_URL")
+    if not url:
+        port = int(os.getenv("PORT", 8080))
+        url = f"http://127.0.0.1:{port}/"
+    interval = int(os.getenv("KEEP_ALIVE_INTERVAL", "30"))
+    logger.info(f"[Keep-Alive] Heartbeat reloader started for {url} (interval: {interval}s)")
     while True:
+        time.sleep(interval)
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'AFKBotKeepAlive/1.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                pass
-        except Exception:
-            pass
-        time.sleep(600)
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 Reloader/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                status = getattr(response, 'status', 200)
+                logger.info(f"[Keep-Alive] Reloaded at {datetime.now().isoformat()}: Status Code {status}")
+        except Exception as e:
+            logger.error(f"[Keep-Alive] Error reloading at {datetime.now().isoformat()}: {e}")
 
 # --- HELPER FUNCTIONS ---
 
