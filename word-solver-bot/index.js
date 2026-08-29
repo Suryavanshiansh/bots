@@ -121,6 +121,11 @@ function getSession(chatId) {
 
 const bot = new Telegraf(BOT_TOKEN || 'DUMMY_TOKEN');
 
+// Global error handler so bot process NEVER crashes on Telegram API errors (e.g. 400 Bad Request)
+bot.catch((err, ctx) => {
+  console.error(`⚠️ Telegram Error in handler [${ctx?.updateType || 'unknown'}]:`, err.message);
+});
+
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 bot.command(['start', 'help'], (ctx) => {
@@ -140,14 +145,14 @@ bot.command(['start', 'help'], (ctx) => {
     `• \`/cleartarget\` — Remove target GC\n` +
     `• \`/status\` — Show your current target GC\n` +
     `• \`/reset\` — Reset your puzzle session`
-  );
+  ).catch(err => console.error('Error replying to start/help:', err.message));
 });
 
 bot.command('reset', (ctx) => {
   const chatId = ctx.chat.id;
   sessions.delete(chatId);
   saveSessionsToDisk();
-  ctx.reply('🔄 Session reset! Send a new grid image or clue list to start a fresh puzzle.');
+  ctx.reply('🔄 Session reset! Send a new grid image or clue list to start a fresh puzzle.').catch(err => console.error('Error replying to reset:', err.message));
 });
 
 // /settarget — run this in the GROUP CHAT to set it as the target
@@ -162,14 +167,20 @@ bot.command('settarget', (ctx) => {
       '⚠️ Run /settarget inside the **group chat** you want words sent to!\n\n' +
       'Steps:\n1. Add this bot to your GC\n2. Open the GC\n3. Type /settarget there',
       { parse_mode: 'Markdown' }
-    );
+    ).catch(err => console.error('Error replying to settarget private:', err.message));
   }
 
   // Save: this user's target GC is this chat
   targetChats.set(fromId, { chatId, chatTitle });
   saveTargetsToDisk();
 
-  ctx.reply(`✅ Target GC set!\n\nWords will be sent directly to: **${chatTitle}**\n\nNow go to your DM with me and solve puzzles — I'll send the answers here automatically!`, { parse_mode: 'Markdown' });
+  ctx.reply(`✅ Target GC set!\n\nWords will be sent directly to: **${chatTitle}**\n\nNow go to your DM with me and solve puzzles — I'll send the answers here automatically!`, { parse_mode: 'Markdown' })
+    .catch(async (err) => {
+      console.error('Could not reply in GC for /settarget:', err.message);
+      try {
+        await bot.telegram.sendMessage(fromId, `✅ Target GC set to **${chatTitle}**!\n\n⚠️ Note: The bot could not post in the group chat because it lacks permission to send text messages in **${chatTitle}**. Please ask a group admin to grant "Send Messages" permission to the bot!`, { parse_mode: 'Markdown' });
+      } catch (e) {}
+    });
 });
 
 // /cleartarget — remove target GC
