@@ -6,6 +6,7 @@ import threading
 import time
 import html
 import urllib.request
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
@@ -112,15 +113,20 @@ def start_health_server():
         logger.warning(f"[HTTP] Health server could not start on port {port}: {e}")
 
 def keep_alive_heartbeat():
-    url = os.getenv("RENDER_EXTERNAL_URL")
+    url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("KEEP_ALIVE_URL") or os.getenv("PING_URL")
     if not url:
         return
+    interval = int(os.getenv("KEEP_ALIVE_INTERVAL", "30"))
+    logger.info(f"[Keep-Alive] Heartbeat reloader started for {url} (interval: {interval}s)")
     while True:
-        time.sleep(300)  # Ping self every 5 minutes automatically
+        time.sleep(interval)
         try:
-            urllib.request.urlopen(url, timeout=10)
-        except Exception:
-            pass
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 Reloader/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                status = getattr(response, 'status', 200)
+                logger.info(f"[Keep-Alive] Reloaded at {datetime.now().isoformat()}: Status Code {status}")
+        except Exception as e:
+            logger.error(f"[Keep-Alive] Error reloading at {datetime.now().isoformat()}: {e}")
 
 # Helper: Check if user is Group Admin or Bot Owner
 async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
