@@ -229,29 +229,37 @@ export function solvePuzzle(grid, clues, dictionary) {
 export function assignUniqueCandidates(results) {
   const selectedIndices = new Array(results.length).fill(0);
   const usedWords = new Set();
-  const usedStartCells = new Set();
+  const usedPaths = new Set();
 
-  for (let i = 0; i < results.length; i++) {
+  // Process longer clues first so longer words (e.g. NIGHTMARE) claim their paths first,
+  // preventing shorter sub-words (e.g. NIGH) from being picked along the exact same path!
+  const sortedIndices = results.map((_, i) => i).sort((a, b) => {
+    const lenA = results[a].clue ? results[a].clue.length : 0;
+    const lenB = results[b].clue ? results[b].clue.length : 0;
+    return lenB - lenA;
+  });
+
+  for (const i of sortedIndices) {
     const candidates = results[i].candidates;
     if (!candidates || candidates.length === 0) continue;
 
     let bestIdx = 0;
-    let foundUniqueStartMatch = false;
+    let foundConstraintMatch = false;
 
-    // Pass 1: Find candidate with an unused word AND an unused starting cell (each word starts at a unique grid cell!)
+    // Pass 1: Find candidate with an unused word AND an unused starting path (not a prefix of a longer word!)
     for (let k = 0; k < candidates.length; k++) {
       const cand = candidates[k];
-      const startKey = `${cand.start.row},${cand.start.col}`;
+      const pathKey = `${cand.start.row},${cand.start.col},${cand.direction}`;
 
-      if (!usedWords.has(cand.word) && !usedStartCells.has(startKey)) {
+      if (!usedWords.has(cand.word) && !usedPaths.has(pathKey)) {
         bestIdx = k;
-        foundUniqueStartMatch = true;
+        foundConstraintMatch = true;
         break;
       }
     }
 
-    // Pass 2: Fallback if all candidate starting cells are taken, pick an unused word
-    if (!foundUniqueStartMatch) {
+    // Pass 2: Fallback if all paths are taken, pick an unused word
+    if (!foundConstraintMatch) {
       for (let k = 0; k < candidates.length; k++) {
         const cand = candidates[k];
         if (!usedWords.has(cand.word)) {
@@ -265,7 +273,7 @@ export function assignUniqueCandidates(results) {
     const chosen = candidates[bestIdx];
     if (chosen) {
       usedWords.add(chosen.word);
-      usedStartCells.add(`${chosen.start.row},${chosen.start.col}`);
+      usedPaths.add(`${chosen.start.row},${chosen.start.col},${chosen.direction}`);
     }
   }
 
