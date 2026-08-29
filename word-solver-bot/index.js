@@ -435,8 +435,15 @@ async function main() {
   dictionary = await loadDictionary();
 
   if (BOT_TOKEN && BOT_TOKEN !== 'DUMMY_TOKEN') {
-    bot.launch();
-    console.log('🤖 Telegram bot is running!');
+    bot.launch().then(() => {
+      console.log('🤖 Telegram bot is running!');
+    }).catch(err => {
+      if (err.code === 401 || err.response?.error_code === 401) {
+        console.error('❌ Telegram 401 Unauthorized: The TELEGRAM_BOT_TOKEN in your .env or Render settings is invalid or revoked. Please get a new token from @BotFather on Telegram!');
+      } else {
+        console.error('⚠️ Bot launch error:', err.message);
+      }
+    });
   } else {
     console.log('⚠️ BOT_TOKEN missing. Configure TELEGRAM_BOT_TOKEN in .env to start receiving Telegram messages.');
   }
