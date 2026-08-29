@@ -17,7 +17,7 @@ USE_POSTGRES = False
 AFK_CACHE = {}
 
 def get_db_url() -> str:
-    raw_url = os.getenv("DATABASE_URL", "").strip()
+    raw_url = (os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL") or "").strip()
     if raw_url.startswith("postgres://"):
         return raw_url.replace("postgres://", "postgresql://", 1)
     return raw_url
