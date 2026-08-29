@@ -229,23 +229,43 @@ export function solvePuzzle(grid, clues, dictionary) {
 export function assignUniqueCandidates(results) {
   const selectedIndices = new Array(results.length).fill(0);
   const usedWords = new Set();
+  const usedStartCells = new Set();
 
   for (let i = 0; i < results.length; i++) {
     const candidates = results[i].candidates;
     if (!candidates || candidates.length === 0) continue;
 
-    let chosenIdx = 0;
+    let bestIdx = 0;
+    let foundUniqueStartMatch = false;
+
+    // Pass 1: Find candidate with an unused word AND an unused starting cell (each word starts at a unique grid cell!)
     for (let k = 0; k < candidates.length; k++) {
-      const word = candidates[k].word;
-      if (!usedWords.has(word)) {
-        chosenIdx = k;
+      const cand = candidates[k];
+      const startKey = `${cand.start.row},${cand.start.col}`;
+
+      if (!usedWords.has(cand.word) && !usedStartCells.has(startKey)) {
+        bestIdx = k;
+        foundUniqueStartMatch = true;
         break;
       }
     }
 
-    selectedIndices[i] = chosenIdx;
-    if (candidates[chosenIdx]) {
-      usedWords.add(candidates[chosenIdx].word);
+    // Pass 2: Fallback if all candidate starting cells are taken, pick an unused word
+    if (!foundUniqueStartMatch) {
+      for (let k = 0; k < candidates.length; k++) {
+        const cand = candidates[k];
+        if (!usedWords.has(cand.word)) {
+          bestIdx = k;
+          break;
+        }
+      }
+    }
+
+    selectedIndices[i] = bestIdx;
+    const chosen = candidates[bestIdx];
+    if (chosen) {
+      usedWords.add(chosen.word);
+      usedStartCells.add(`${chosen.start.row},${chosen.start.col}`);
     }
   }
 
