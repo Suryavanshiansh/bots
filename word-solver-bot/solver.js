@@ -1,3 +1,5 @@
+import { wordRankMap } from './dictionary.js';
+
 const DIRECTIONS = [
   { dr: 0, dc: 1, name: 'Right' },
   { dr: 0, dc: -1, name: 'Left' },
@@ -213,6 +215,13 @@ export function solvePuzzle(grid, clues, dictionary) {
         candidates.push(cand);
       }
     }
+
+    // Sort candidates so common meaningful words appear first!
+    candidates.sort((a, b) => {
+      const rankA = wordRankMap.get(a.word) || 999999;
+      const rankB = wordRankMap.get(b.word) || 999999;
+      return rankA - rankB;
+    });
 
     results.push({
       clue,
