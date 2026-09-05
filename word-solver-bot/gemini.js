@@ -32,12 +32,10 @@ console.log(`🔑 Loaded ${API_KEYS.length} Gemini API key(s).`);
 
 // ─── Model list ──────────────────────────────────────────────────────────────
 const CANDIDATE_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-3.5-flash',
-  'gemini-flash-latest',
   'gemini-2.0-flash',
-  'gemini-1.5-flash'
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-2.0-flash-lite'
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -86,19 +84,29 @@ Important rules:
   };
 
   let lastError = null;
-  // Track which key we started with so we know when we've tried them all
-  const startingKeyIndex = currentKeyIndex;
   let keysTriedCount = 0;
+
+  // Helper for per-request timeout (18 seconds max per request so 4 attempts fit within Telegram's 90s window)
+  const generateContentWithTimeout = (model, contents, timeoutMs = 18000) => {
+    return Promise.race([
+      model.generateContent(contents),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Request timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+      )
+    ]);
+  };
 
   for (const modelName of CANDIDATE_MODELS) {
     let keyForThisModel = getCurrentApiKey(apiKey);
+    const maxAttempts = modelName === 'gemini-3.6-flash' ? 4 : 2; // Give gemini-3.6-flash extra retry attempts
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        console.log(`🔑 Key #${currentKeyIndex + 1}/${API_KEYS.length} | Model: ${modelName} | Attempt ${attempt}`);
+        console.log(`🔑 Key #${currentKeyIndex + 1}/${API_KEYS.length} | Model: ${modelName} | Attempt ${attempt}/${maxAttempts}`);
         const genAI = new GoogleGenerativeAI(keyForThisModel);
         const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent([prompt, imagePart]);
+
+        const result = await generateContentWithTimeout(model, [prompt, imagePart], 18000);
         const responseText = result.response.text();
 
         if (responseText && responseText.trim()) {
@@ -130,26 +138,53 @@ Important rules:
             keyForThisModel = getNextApiKey();
             keysTriedCount++;
             console.log(`🔄 Rate limit hit! Rotating to API key #${currentKeyIndex + 1}/${API_KEYS.length}...`);
-            await sleep(500); // brief pause before retrying with new key
-            continue; // retry same model with new key
+            await sleep(500);
+            continue;
           } else {
-            // All keys exhausted for this rate limit — wait before moving on
-            console.warn(`⏳ All ${API_KEYS.length} key(s) rate limited. Waiting 5 seconds...`);
-            await sleep(5000);
-            keysTriedCount = 0; // reset key tracking
+            console.warn(`⏳ All ${API_KEYS.length} key(s) rate limited. Waiting 3 seconds...`);
+            await sleep(3000);
+            keysTriedCount = 0;
             break;
           }
         }
 
-        // 503: server busy — wait and retry same key
+        // 503 / High Demand / Timeout: server busy — try key rotation & exponential delay
         if (err.message && (
           err.message.includes('503') ||
           err.message.includes('high demand') ||
-          err.message.includes('Unavailable')
+          err.message.includes('Unavailable') ||
+          err.message.includes('timed out')
         )) {
-          if (attempt < 3) {
-            console.log(`⏳ Server busy. Retrying in 1 second...`);
+          if (API_KEYS.length > 1 && keysTriedCount < API_KEYS.length - 1) {
+            keyForThisModel = getNextApiKey();
+            keysTriedCount++;
+            console.log(`🔄 503 High Demand! Rotating to API key #${currentKeyIndex + 1}/${API_KEYS.length} for ${modelName}...`);
             await sleep(1000);
+            continue;
+          }
+
+          if (attempt < maxAttempts) {
+            const backoffMs = attempt * 1500;
+            console.log(`⏳ Server busy/timed out. Retrying ${modelName} in ${backoffMs / 1000}s...`);
+            await sleep(backoffMs);
+            continue;
+          }
+          break;
+        }
+
+        // 403: Forbidden / API key disabled or denied access
+        if (err.message && (
+          err.message.includes('403') ||
+          err.message.includes('denied access') ||
+          err.message.includes('Forbidden') ||
+          err.message.includes('API_KEY_INVALID')
+        )) {
+          console.warn(`❌ Key #${currentKeyIndex + 1} access denied (403 Forbidden). API Key is revoked, disabled, or blocked.`);
+          if (API_KEYS.length > 1 && keysTriedCount < API_KEYS.length - 1) {
+            keyForThisModel = getNextApiKey();
+            keysTriedCount++;
+            console.log(`🔄 Rotating to API key #${currentKeyIndex + 1}/${API_KEYS.length}...`);
+            await sleep(500);
             continue;
           }
           break;
