@@ -33,9 +33,10 @@ console.log(`🔑 Loaded ${API_KEYS.length} Gemini API key(s).`);
 // ─── Model list ──────────────────────────────────────────────────────────────
 const CANDIDATE_MODELS = [
   'gemini-2.0-flash',
-  'gemini-1.5-flash',
+  'gemini-2.0-pro-exp-02-05',
   'gemini-1.5-pro',
-  'gemini-2.0-flash-lite'
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-flash'
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
